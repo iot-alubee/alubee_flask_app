@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "alubee-prod",
+  "private_key_id": "c37c18ef4d8db673af7ad761498df32d6f41f19e",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCqHLGMrgUw0Y1z\noulgXg/rmD4UvwBvEsNLT3X2FHpgvpNSX4RL8Rszr+rzA44joIlthRpxgtuwvzId\njxYebW8DFfUm0s5jF/EAbUEfxt0WVwwMQPlCPMH+kYdDKxGU6Ub/GmkXf02SoO/B\nua8d6T+SAichzzSqfX2polzTh5v6YLbYQes/W5WncO+jGESVorrfFGNrzh02yAHx\nsYpja8EbcqTOl6CC5vkcxuAtXYRzWpYeFVLQsRUurbKNa94tf/FLL8EPeXmZ09Zj\ntnXFKVc3OeFbZ0W2Xp+cFqicPUCXSW+ArJ4RKVcHwvHeianr0wVXu6sxZgA+aESX\nkanrL9J3AgMBAAECggEACBaNKo8rmAKeoxzf08ElKKJ4cSwTrTRLLM1+YlDe8LKe\n9o+sDqBMFs0Kcrt8ip0ba6WkeDkskN7GVzlyZ8f0O0VT/qCPR47f2pFXQ1eFM4a3\n/+0m7MtOvffVYpAtqdLdmUt8K63V1l7oh2F4vgdVCnAnxCfB7UlCLEqX90a/V8wl\nfajZIbQXvS/Ba00o5kMYF5oBaE//ZIW5cPLVV5rERa82cHMRKPkaGtFrcobg5YVV\nbaTIwHGPaCxb0rwV81ur27LKt59pH+WEWLbMizC0NHrMyLVgOShK8BQ5g971iJqf\noKueuF7p9vSSEWtLWycm624BmLV5lyHxCzT0AvkgwQKBgQDhtHGUVqjyPk5HHr/4\nwuwJ8Jet/H79ig46/zGj7ogbloTKVgOZpmHOIYpVJeHC8arXK0PSQZo5duUUR/t1\noDIqtTJv5hOxxRBW67oZZ4C+aehENXaqXoR7hidT2pZXRf+K7OSZFhnKxduXw+Zx\ngFImXs3o7cNYWIc23xDwEjZw+QKBgQDA8f/C0UPFz7VXGFfzeFeGUTs6qqzOdhT5\nVg0Fec9IJvv5Y8BCVul5h5lbth8hbsWFhdx6ivSxguThYrG/rwTikigrK9oNjoyY\n6xNC5e+hP8M2/FsBVn7GZYgC661eWC1IiafdN7jtYJYY3191rAloyItqTEGFq8At\nLKwrOs+q7wKBgBhbAGahc1mwn4HNL6oIXrAz5ipANPPnEeIL569o7gcMFwg+f+T0\nr1kvBV5q2BHRQj41zPvDWIEa811c5yWqQ7+YDflFOprUSQ8YINzc7medxhKWMlfw\nGxu5PkUuMUr5orm7Fm/ukpnu/+NAoH1e+35ofI/GGG5QH0csiwdc78MBAoGAFwaK\nPCiXCus/u9YW4OJSp5/YDqdBmh3zYNIJGccwmm60kU17Ky+OC0fIYG56hpXekpGn\n/yPIEcsKH2+UwMhVL+i7THOeQRHq63DaSpiAIWEnnc892QoGdQy2z4pqlSC2vrpW\nwwqcUg+9udgmXzeZo9yS7quNAjO96mYzYbFSCRcCgYEAvTSvpsaRaW4ZfBqlL1Wk\nT2u4jfj6dgNj6f05hf06lomm5TFLol6KWayp+m32qoAEKz9tK2WWBWbeHvZyq7V/\ngqSgWjfFrwwzH/yDghui6nXQ/7m1NHglW0+qmTEWZ5KlpSjJwCv1gAtdGnbprUGo\nOoSo6bcgdisoehfMAJWcYG0=\n-----END PRIVATE KEY-----\n",
+  "client_email": "alubee-prod-key-service-accoun@alubee-prod.iam.gserviceaccount.com",
+  "client_id": "108007113143986054169",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/alubee-prod-key-service-accoun%40alubee-prod.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

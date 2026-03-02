@@ -1,0 +1,8 @@
+pandas
+streamlit
+plotly 
+google-cloud-bigquery 
+pyarrow 
+db-dtypes
+flask
+flask-login
