@@ -256,6 +256,7 @@ def index():
                 department=selected_department,
             )
 
+    highlights_filter = auth.get_user_preference(current_user.id, "highlightsFilter") or "bad"
     return render_template(
         "index.html",
         machine_rows=machine_rows,
@@ -267,6 +268,7 @@ def index():
         unit_options=UNIT_OPTIONS,
         department_options=DEPARTMENT_OPTIONS,
         active_nav="production",
+        highlights_filter=highlights_filter,
     )
 
 
@@ -1731,10 +1733,28 @@ def logout():
     return redirect(url_for("login"))
 
 
-@app.route("/settings")
+@app.route("/settings", methods=["GET"])
+@app.route("/settings.html", methods=["GET"])
 @login_required
 def settings():
-    return render_template("settings.html")
+    highlights_filter = auth.get_user_preference(current_user.id, "highlightsFilter") or "bad"
+    return render_template(
+        "settings.html",
+        active_nav="settings",
+        highlights_filter=highlights_filter,
+    )
+
+
+@app.route("/settings/highlights", methods=["POST"])
+@login_required
+def settings_highlights():
+    """Save highlights filter preference for the current user."""
+    data = request.get_json(silent=True) or {}
+    value = (data.get("highlightsFilter") or request.form.get("highlightsFilter") or "bad").strip().lower()
+    if value not in ("bad", "good"):
+        value = "bad"
+    auth.set_user_preference(current_user.id, "highlightsFilter", value)
+    return {"ok": True, "highlightsFilter": value}
 
 
 if __name__ == "__main__":

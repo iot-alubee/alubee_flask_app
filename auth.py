@@ -61,6 +61,41 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id INTEGER NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            PRIMARY KEY (user_id, key),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def get_user_preference(user_id, key):
+    """Return preference value for user and key, or None if not set."""
+    if not user_id:
+        return None
+    conn = get_db()
+    row = conn.execute(
+        "SELECT value FROM user_preferences WHERE user_id = ? AND key = ?",
+        (int(user_id), key),
+    ).fetchone()
+    conn.close()
+    return row["value"] if row else None
+
+
+def set_user_preference(user_id, key, value):
+    """Save preference for user and key."""
+    if not user_id:
+        return
+    conn = get_db()
+    conn.execute(
+        "INSERT OR REPLACE INTO user_preferences (user_id, key, value) VALUES (?, ?, ?)",
+        (int(user_id), key, str(value)),
+    )
     conn.commit()
     conn.close()
 
