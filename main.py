@@ -413,6 +413,7 @@ def realtime():
 PARTS_TABLE = "alubee-prod.alubee_production_marts.dim_component_mapper"
 MONTHLY_PLANNER_TABLE = "alubee-prod.alubee_production_marts.dim_monthly_planner"
 JOB_ALLOCATOR_TABLE = "alubee-prod.alubee_production_marts.fact_job_allocator"
+PLAN_CHANGE_REQUEST_TABLE = "alubee-prod.alubee_production_marts.fact_plan_change_request"
 
 
 def fetch_monthly_planner(plan_month: str | None = None, department: str | None = None):
@@ -616,9 +617,11 @@ def fetch_job_allocations(department: str | None = None, unit: str | None = None
     if bq_client is None:
         return []
     base_query = """
-        SELECT part_no, plan, produced, shift_allocated, consumed_shift, job_created_at, machine_no
+        SELECT part_no, plan, produced, shift_allocated, consumed_shift, job_created_at, machine_no,
+               back_up_part_no, back_up_schedule
         FROM (
             SELECT part_no, plan, produced, shift_allocated, consumed_shift, job_created_at, machine_no,
+                   back_up_part_no, back_up_schedule,
                    ROW_NUMBER() OVER (PARTITION BY machine_no ORDER BY job_created_at DESC) AS rn
             FROM `{table}`
             WHERE 1=1
@@ -659,6 +662,126 @@ def fetch_job_allocations(department: str | None = None, unit: str | None = None
                 "consumed_shift": _v("consumed_shift"),
                 "job_created_at": jca_str,
                 "machine_no": _v("machine_no"),
+                "back_up_part_no": _v("back_up_part_no"),
+                "back_up_schedule": _v("back_up_schedule"),
+            }
+        )
+    return rows
+
+
+def fetch_department_job_allocations(selected_tab: str):
+    """Fetch latest allocated jobs per machine for the selected department tab."""
+    if bq_client is None:
+        return []
+
+    tab = (selected_tab or "PDC").strip().upper()
+    department_map = {
+        "PDC": ["PDC"],
+        "CNC": ["CNC"],
+        "SEC": ["SEC"],
+        "FET": ["FET", "FETTLING"],
+    }
+    departments = [d.lower() for d in department_map.get(tab, ["PDC"])]
+
+    query = f"""
+        SELECT machine_no, part_no, plan, produced, shift_allocated, job_created_at,
+               back_up_part_no, back_up_schedule,
+               EXISTS (
+                   SELECT 1
+                   FROM `{PLAN_CHANGE_REQUEST_TABLE}` r
+                   WHERE r.machine_no = t.machine_no
+                     AND r.from_part_no = t.part_no
+                     AND r.to_part_no = t.back_up_part_no
+                     AND r.approval_flag = 0
+               ) AS has_pending_switch
+        FROM (
+            SELECT
+                machine_no,
+                part_no,
+                plan,
+                produced,
+                shift_allocated,
+                job_created_at,
+                back_up_part_no,
+                back_up_schedule,
+                ROW_NUMBER() OVER (PARTITION BY machine_no ORDER BY job_created_at DESC) AS rn
+            FROM `{JOB_ALLOCATOR_TABLE}`
+            WHERE LOWER(TRIM(COALESCE(department, ''))) IN UNNEST(@departments)
+              AND TRIM(COALESCE(part_no, '')) != ''
+              AND COALESCE(plan, 0) > 0
+        ) t
+        WHERE rn = 1
+        ORDER BY machine_no
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("departments", "STRING", departments),
+        ]
+    )
+    try:
+        result = bq_client.query(query, job_config=job_config).result()
+    except Exception as e:
+        app.logger.warning("BigQuery fetch_department_job_allocations failed: %s", e)
+        return []
+
+    rows = []
+    for row in result:
+        rows.append(
+            {
+                "machine_no": row.get("machine_no"),
+                "part_no": row.get("part_no"),
+                "plan": row.get("plan"),
+                "produced": row.get("produced") if row.get("produced") is not None else 0,
+                "shift_allocated": row.get("shift_allocated"),
+                "job_created_at": _format_timestamp_ist(row.get("job_created_at")),
+                "back_up_part_no": row.get("back_up_part_no"),
+                "back_up_schedule": row.get("back_up_schedule"),
+                "has_pending_switch": bool(row.get("has_pending_switch")),
+            }
+        )
+    return rows
+
+
+def fetch_switch_requests():
+    """Fetch switch requests for PPC review."""
+    if bq_client is None:
+        return []
+    query = f"""
+        SELECT
+            machine_no,
+            from_part_no,
+            to_part_no,
+            requested_at,
+            requested_by,
+            approval_flag,
+            UNIX_MICROS(requested_at) AS requested_at_us
+        FROM `{PLAN_CHANGE_REQUEST_TABLE}`
+        ORDER BY requested_at DESC
+    """
+    try:
+        result = bq_client.query(query).result()
+    except Exception as e:
+        app.logger.warning("BigQuery fetch_switch_requests failed: %s", e)
+        return []
+
+    rows = []
+    for row in result:
+        approval_flag = row.get("approval_flag")
+        status = "Pending"
+        if approval_flag == 1:
+            status = "Approved"
+        elif approval_flag == -1:
+            status = "Denied"
+        rows.append(
+            {
+                "machine_no": row.get("machine_no"),
+                "from_part_no": row.get("from_part_no"),
+                "to_part_no": row.get("to_part_no"),
+                "requested_at": _format_timestamp_ist(row.get("requested_at")),
+                "requested_by": (row.get("requested_by") or "").strip(),
+                "requested_at_us": row.get("requested_at_us"),
+                "approval_flag": approval_flag,
+                "status": status,
             }
         )
     return rows
@@ -835,6 +958,7 @@ def ppc():
             executor.submit(fetch_monthly_planner, plan_month_filter, filter_department): "monthly_plans",
             executor.submit(fetch_machines, daily_filter_department or None, daily_filter_unit): "daily_machines",
             executor.submit(fetch_job_allocations, daily_filter_department or None, daily_filter_unit): "job_allocations",
+            executor.submit(fetch_switch_requests): "switch_requests",
             executor.submit(fetch_parts_count, part_filter_department): "parts_count",
             executor.submit(fetch_parts, filter_department, None, 0): "monthly_planner_parts_dropdown",
             executor.submit(fetch_parts, part_filter_department, None, 0): "parts_for_dropdown",
@@ -851,6 +975,7 @@ def ppc():
     monthly_plans = results.get("monthly_plans") or []
     daily_machines = results.get("daily_machines") or []
     job_allocations = results.get("job_allocations") or []
+    switch_requests = results.get("switch_requests") or []
     parts_count = results.get("parts_count") or 0
     monthly_planner_parts_dropdown = results.get("monthly_planner_parts_dropdown") or []
     parts_for_dropdown = results.get("parts_for_dropdown") or []
@@ -930,6 +1055,7 @@ def ppc():
         daily_filter_unit=daily_filter_unit,
         daily_machines=daily_machines,
         job_allocations=job_allocations,
+        switch_requests=switch_requests,
         monthly_planner_parts=monthly_planner_parts,
     )
 
@@ -953,6 +1079,10 @@ def ppc_job_allocator_update_plan():
     daily_unit = request.form.get("daily_unit") or "Unit I"
     plan_year_raw = request.form.get("plan_year") or ""
     plan_month_raw = request.form.get("plan_month") or ""
+    add_backup_plan_raw = (request.form.get("add_backup_plan") or "").strip()
+    add_backup_plan = add_backup_plan_raw in ("1", "true", "on", "yes")
+    back_up_part_no_raw = (request.form.get("back_up_part_no") or "").strip()
+    back_up_schedule_raw = request.form.get("back_up_schedule") or ""
 
     if not machine_no:
         flash("Invalid machine.", "danger")
@@ -979,6 +1109,40 @@ def ppc_job_allocator_update_plan():
         return redirect(
             url_for("ppc", daily_dept=daily_dept, daily_unit=daily_unit) + "#daily-tab-pane"
         )
+
+    back_up_part_no_val = None
+    back_up_schedule_val = None
+    if add_backup_plan:
+        if not back_up_part_no_raw:
+            flash("Back Up Plan part is required.", "danger")
+            return redirect(
+                url_for("ppc", daily_dept=daily_dept, daily_unit=daily_unit) + "#daily-tab-pane"
+            )
+        backup_part = _get_part_by_part_no(back_up_part_no_raw)
+        if not backup_part:
+            flash("Selected Back Up part not found.", "danger")
+            return redirect(
+                url_for("ppc", daily_dept=daily_dept, daily_unit=daily_unit) + "#daily-tab-pane"
+            )
+        back_up_part_no_val = backup_part["part_no"]
+        if back_up_part_no_val == part_no:
+            flash("Back Up Plan part cannot be the same as the primary part.", "danger")
+            return redirect(
+                url_for("ppc", daily_dept=daily_dept, daily_unit=daily_unit)
+                + "#daily-tab-pane"
+            )
+        try:
+            back_up_schedule_val = int(back_up_schedule_raw)
+        except (TypeError, ValueError):
+            flash("Back Up Plan schedule must be a number.", "danger")
+            return redirect(
+                url_for("ppc", daily_dept=daily_dept, daily_unit=daily_unit) + "#daily-tab-pane"
+            )
+        if back_up_schedule_val < 0:
+            flash("Back Up Plan schedule cannot be negative.", "danger")
+            return redirect(
+                url_for("ppc", daily_dept=daily_dept, daily_unit=daily_unit) + "#daily-tab-pane"
+            )
 
     # Determine plan_month (yyyy-mm) for Monthly Planner lookup (defaults to current month/year)
     today = date.today()
@@ -1112,6 +1276,8 @@ def ppc_job_allocator_update_plan():
         bigquery.ScalarQueryParameter("part_no", "STRING", part_no),
         bigquery.ScalarQueryParameter("plan", "INT64", plan_val),
         bigquery.ScalarQueryParameter("shift_allocated", "FLOAT64", float(shift_required)),
+        bigquery.ScalarQueryParameter("back_up_part_no", "STRING", back_up_part_no_val),
+        bigquery.ScalarQueryParameter("back_up_schedule", "INT64", back_up_schedule_val),
     ]
     job_config = bigquery.QueryJobConfig(query_parameters=params)
 
@@ -1119,6 +1285,8 @@ def ppc_job_allocator_update_plan():
         UPDATE `{JOB_ALLOCATOR_TABLE}`
         SET plan = @plan,
             shift_allocated = @shift_allocated,
+            back_up_part_no = @back_up_part_no,
+            back_up_schedule = @back_up_schedule,
             job_created_at = CURRENT_TIMESTAMP()
         WHERE machine_no = @machine_no
           AND part_no = @part_no
@@ -1147,7 +1315,7 @@ def ppc_job_allocator_update_plan():
         # No row with same machine_no + part_no: insert new row
         insert_query = f"""
             INSERT INTO `{JOB_ALLOCATOR_TABLE}`
-            (machine_no, unit, department, part_no, plan, produced, shift_allocated, consumed_shift, job_created_at)
+            (machine_no, unit, department, part_no, plan, produced, shift_allocated, consumed_shift, job_created_at, back_up_part_no, back_up_schedule)
             VALUES (
                 @machine_no,
                 @unit,
@@ -1157,7 +1325,9 @@ def ppc_job_allocator_update_plan():
                 0,
                 @shift_allocated,
                 0,
-                CURRENT_TIMESTAMP()
+                CURRENT_TIMESTAMP(),
+                @back_up_part_no,
+                @back_up_schedule
             )
         """
         try:
@@ -1727,6 +1897,293 @@ def ppc_edit_part(part_no: str):
 def consumables():
     require_page("consumables")
     return render_template("under_development.html", active_nav="consumables")
+
+
+@app.route("/department")
+@login_required
+def department():
+    # Reuse PPC permission so existing PPC users can access this page.
+    require_page("ppc")
+    selected_tab = (request.args.get("tab") or "PDC").strip().upper()
+    allowed_tabs = ("PDC", "FET", "CNC", "SEC")
+    if selected_tab not in allowed_tabs:
+        selected_tab = "PDC"
+    department_rows = fetch_department_job_allocations(selected_tab)
+    return render_template(
+        "department.html",
+        active_nav="department",
+        selected_tab=selected_tab,
+        department_tabs=allowed_tabs,
+        department_rows=department_rows,
+    )
+
+
+@app.route("/department/switch-request", methods=["POST"])
+@login_required
+def department_switch_request():
+    # Reuse PPC permission so existing PPC users can access this action.
+    require_page("ppc")
+    if bq_client is None:
+        flash("BigQuery is not configured.", "danger")
+        return redirect(url_for("department"))
+
+    machine_no = (request.form.get("machine_no") or "").strip()
+    from_part_no = (request.form.get("from_part_no") or "").strip()
+    to_part_no = (request.form.get("to_part_no") or "").strip()
+    selected_tab = (request.form.get("tab") or "PDC").strip().upper()
+    allowed_tabs = {"PDC", "FET", "CNC", "SEC"}
+    if selected_tab not in allowed_tabs:
+        selected_tab = "PDC"
+
+    if not machine_no or not from_part_no or not to_part_no:
+        flash("Invalid switch request data.", "danger")
+        return redirect(url_for("department", tab=selected_tab))
+
+    if from_part_no == to_part_no:
+        flash("Back Up plan must be different from primary plan.", "danger")
+        return redirect(url_for("department", tab=selected_tab))
+
+    duplicate_query = f"""
+        SELECT 1
+        FROM `{PLAN_CHANGE_REQUEST_TABLE}`
+        WHERE machine_no = @machine_no
+          AND from_part_no = @from_part_no
+          AND to_part_no = @to_part_no
+          AND approval_flag = 0
+        LIMIT 1
+    """
+    duplicate_cfg = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("machine_no", "STRING", machine_no),
+            bigquery.ScalarQueryParameter("from_part_no", "STRING", from_part_no),
+            bigquery.ScalarQueryParameter("to_part_no", "STRING", to_part_no),
+        ]
+    )
+    try:
+        duplicate_row = next(
+            bq_client.query(duplicate_query, job_config=duplicate_cfg).result(),
+            None,
+        )
+        if duplicate_row is not None:
+            flash("A pending switch request already exists for this machine and parts.", "warning")
+            return redirect(url_for("department", tab=selected_tab))
+    except Exception as e:
+        app.logger.warning("BigQuery duplicate switch request check failed: %s", e)
+
+    query = f"""
+        INSERT INTO `{PLAN_CHANGE_REQUEST_TABLE}`
+        (machine_no, from_part_no, to_part_no, requested_at, requested_by, approval_flag)
+        VALUES (@machine_no, @from_part_no, @to_part_no, CURRENT_TIMESTAMP(), @requested_by, 0)
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("machine_no", "STRING", machine_no),
+            bigquery.ScalarQueryParameter("from_part_no", "STRING", from_part_no),
+            bigquery.ScalarQueryParameter("to_part_no", "STRING", to_part_no),
+            bigquery.ScalarQueryParameter("requested_by", "STRING", (current_user.email or "").strip()),
+        ]
+    )
+    try:
+        bq_client.query(query, job_config=job_config).result()
+        flash("Switch request raised.", "success")
+    except Exception as e:
+        app.logger.warning("BigQuery insert switch request failed: %s", e)
+        flash("Failed to raise switch request.", "danger")
+
+    return redirect(url_for("department", tab=selected_tab))
+
+
+@app.route("/ppc/switch-request/approve", methods=["POST"])
+@login_required
+def ppc_approve_switch_request():
+    require_page("ppc")
+    if bq_client is None:
+        flash("BigQuery is not configured.", "danger")
+        return redirect(url_for("ppc") + "#switch-request-tab-pane")
+
+    machine_no = (request.form.get("machine_no") or "").strip()
+    from_part_no = (request.form.get("from_part_no") or "").strip()
+    to_part_no = (request.form.get("to_part_no") or "").strip()
+    requested_at_us_raw = (request.form.get("requested_at_us") or "").strip()
+    try:
+        requested_at_us = int(requested_at_us_raw)
+    except (TypeError, ValueError):
+        requested_at_us = None
+
+    if not machine_no or not from_part_no or not to_part_no or requested_at_us is None:
+        flash("Invalid switch request.", "danger")
+        return redirect(url_for("ppc") + "#switch-request-tab-pane")
+
+    latest_query = f"""
+        SELECT machine_no, unit, department, part_no, back_up_part_no, back_up_schedule
+        FROM (
+            SELECT
+                machine_no, unit, department, part_no, back_up_part_no, back_up_schedule,
+                ROW_NUMBER() OVER (PARTITION BY machine_no ORDER BY job_created_at DESC) AS rn
+            FROM `{JOB_ALLOCATOR_TABLE}`
+            WHERE machine_no = @machine_no
+        ) t
+        WHERE rn = 1
+        LIMIT 1
+    """
+    latest_cfg = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("machine_no", "STRING", machine_no)]
+    )
+    latest_row = None
+    try:
+        latest_row = next(bq_client.query(latest_query, job_config=latest_cfg).result(), None)
+    except Exception as e:
+        app.logger.warning("BigQuery fetch latest allocation for approve failed: %s", e)
+
+    if not latest_row:
+        flash("Latest machine allocation not found.", "danger")
+        return redirect(url_for("ppc") + "#switch-request-tab-pane")
+
+    current_part_no = (latest_row.get("part_no") or "").strip()
+    backup_part_no = (latest_row.get("back_up_part_no") or "").strip()
+    backup_schedule = latest_row.get("back_up_schedule")
+    machine_unit = latest_row.get("unit")
+    machine_department = latest_row.get("department")
+
+    if current_part_no != from_part_no or backup_part_no != to_part_no or backup_schedule is None:
+        flash("Switch request no longer matches current backup plan.", "danger")
+        return redirect(url_for("ppc") + "#switch-request-tab-pane")
+
+    try:
+        new_plan = int(backup_schedule)
+    except (TypeError, ValueError):
+        flash("Invalid backup schedule for switch.", "danger")
+        return redirect(url_for("ppc") + "#switch-request-tab-pane")
+    if new_plan <= 0:
+        flash("Backup schedule must be greater than zero.", "danger")
+        return redirect(url_for("ppc") + "#switch-request-tab-pane")
+
+    qty_query = f"""
+        SELECT qty_per_hour
+        FROM `{PARTS_TABLE}`
+        WHERE part_no = @part_no
+        LIMIT 1
+    """
+    qty_cfg = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("part_no", "STRING", to_part_no)]
+    )
+    qty_row = None
+    try:
+        qty_row = next(bq_client.query(qty_query, job_config=qty_cfg).result(), None)
+    except Exception as e:
+        app.logger.warning("BigQuery fetch qty_per_hour for approve failed: %s", e)
+    qty_per_hour = float((qty_row or {}).get("qty_per_hour") or 0)
+    shift_allocated = 0.0
+    if qty_per_hour > 0:
+        shift_allocated = round(((new_plan / qty_per_hour) / 11.5) * 100.0) / 100.0
+
+    insert_query = f"""
+        INSERT INTO `{JOB_ALLOCATOR_TABLE}`
+        (machine_no, unit, department, part_no, plan, produced, shift_allocated, consumed_shift, job_created_at, back_up_part_no, back_up_schedule)
+        VALUES (
+            @machine_no,
+            @unit,
+            @department,
+            @part_no,
+            @plan,
+            0,
+            @shift_allocated,
+            0,
+            CURRENT_TIMESTAMP(),
+            NULL,
+            NULL
+        )
+    """
+    insert_cfg = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("machine_no", "STRING", machine_no),
+            bigquery.ScalarQueryParameter("unit", "STRING", machine_unit),
+            bigquery.ScalarQueryParameter("department", "STRING", machine_department),
+            bigquery.ScalarQueryParameter("part_no", "STRING", to_part_no),
+            bigquery.ScalarQueryParameter("plan", "INT64", new_plan),
+            bigquery.ScalarQueryParameter("shift_allocated", "FLOAT64", shift_allocated),
+        ]
+    )
+    try:
+        bq_client.query(insert_query, job_config=insert_cfg).result()
+    except Exception as e:
+        app.logger.warning("BigQuery insert switched allocation failed: %s", e)
+        flash("Failed to apply switch.", "danger")
+        return redirect(url_for("ppc") + "#switch-request-tab-pane")
+
+    update_query = f"""
+        UPDATE `{PLAN_CHANGE_REQUEST_TABLE}`
+        SET approval_flag = 1
+        WHERE machine_no = @machine_no
+          AND from_part_no = @from_part_no
+          AND to_part_no = @to_part_no
+          AND UNIX_MICROS(requested_at) = @requested_at_us
+          AND approval_flag = 0
+    """
+    update_cfg = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("machine_no", "STRING", machine_no),
+            bigquery.ScalarQueryParameter("from_part_no", "STRING", from_part_no),
+            bigquery.ScalarQueryParameter("to_part_no", "STRING", to_part_no),
+            bigquery.ScalarQueryParameter("requested_at_us", "INT64", requested_at_us),
+        ]
+    )
+    try:
+        bq_client.query(update_query, job_config=update_cfg).result()
+        flash("Switch request approved and job card updated.", "success")
+    except Exception as e:
+        app.logger.warning("BigQuery approve switch request update failed: %s", e)
+        flash("Approved switch but failed to update request status.", "warning")
+
+    return redirect(url_for("ppc") + "#switch-request-tab-pane")
+
+
+@app.route("/ppc/switch-request/deny", methods=["POST"])
+@login_required
+def ppc_deny_switch_request():
+    require_page("ppc")
+    if bq_client is None:
+        flash("BigQuery is not configured.", "danger")
+        return redirect(url_for("ppc") + "#switch-request-tab-pane")
+
+    machine_no = (request.form.get("machine_no") or "").strip()
+    from_part_no = (request.form.get("from_part_no") or "").strip()
+    to_part_no = (request.form.get("to_part_no") or "").strip()
+    requested_at_us_raw = (request.form.get("requested_at_us") or "").strip()
+    try:
+        requested_at_us = int(requested_at_us_raw)
+    except (TypeError, ValueError):
+        requested_at_us = None
+
+    if not machine_no or not from_part_no or not to_part_no or requested_at_us is None:
+        flash("Invalid switch request.", "danger")
+        return redirect(url_for("ppc") + "#switch-request-tab-pane")
+
+    query = f"""
+        UPDATE `{PLAN_CHANGE_REQUEST_TABLE}`
+        SET approval_flag = -1
+        WHERE machine_no = @machine_no
+          AND from_part_no = @from_part_no
+          AND to_part_no = @to_part_no
+          AND UNIX_MICROS(requested_at) = @requested_at_us
+          AND approval_flag = 0
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("machine_no", "STRING", machine_no),
+            bigquery.ScalarQueryParameter("from_part_no", "STRING", from_part_no),
+            bigquery.ScalarQueryParameter("to_part_no", "STRING", to_part_no),
+            bigquery.ScalarQueryParameter("requested_at_us", "INT64", requested_at_us),
+        ]
+    )
+    try:
+        bq_client.query(query, job_config=job_config).result()
+        flash("Switch request denied.", "success")
+    except Exception as e:
+        app.logger.warning("BigQuery deny switch request failed: %s", e)
+        flash("Failed to deny switch request.", "danger")
+
+    return redirect(url_for("ppc") + "#switch-request-tab-pane")
 
 
 @app.route("/maintenance")

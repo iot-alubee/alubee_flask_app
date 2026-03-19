@@ -12,12 +12,17 @@
       </li>
       <li class="nav-item" role="presentation">
         <button class="nav-link" id="daily-tab" data-bs-toggle="tab" data-bs-target="#daily-tab-pane" type="button" role="tab" aria-controls="daily-tab-pane" aria-selected="false">
-          Job Allocator
+          Weekly Planner
         </button>
       </li>
       <li class="nav-item" role="presentation">
         <button class="nav-link" id="part-tab" data-bs-toggle="tab" data-bs-target="#part-tab-pane" type="button" role="tab" aria-controls="part-tab-pane" aria-selected="false">
           Part Manager
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="switch-request-tab" data-bs-toggle="tab" data-bs-target="#switch-request-tab-pane" type="button" role="tab" aria-controls="switch-request-tab-pane" aria-selected="false">
+          Switch Request
         </button>
       </li>
     </ul>
@@ -211,6 +216,8 @@
                           data-machine-no="{{ row.get('machine_no') or '' }}"
                           data-part-no="{{ row.get('part_no') or '' }}"
                           data-plan="{{ row.get('plan') if row.get('plan') is not none else '' }}"
+                          data-back-up-part-no="{{ row.get('back_up_part_no') or '' }}"
+                          data-back-up-schedule="{{ row.get('back_up_schedule') if row.get('back_up_schedule') is not none else '' }}"
                           title="Click to update plan">
                         {{ row.get('machine_no') if row.get('machine_no') is not none and row.get('machine_no') != '' else '-' }}
                       </td>
@@ -393,6 +400,74 @@
           </div>
         </div>
       </div>
+
+      <div class="tab-pane fade" id="switch-request-tab-pane" role="tabpanel" aria-labelledby="switch-request-tab" tabindex="0">
+        <div class="app-card app-card-settings shadow-sm">
+          <div class="app-card-body p-0">
+            <div class="table-responsive">
+              <table class="table mb-0 table-striped table-bordered align-middle">
+                <thead class="table-light">
+                  <tr>
+                    <th class="cell">Machine No</th>
+                    <th class="cell">From Part No</th>
+                    <th class="cell">To Part No</th>
+                    <th class="cell">Requested At</th>
+                    <th class="cell">Requested By</th>
+                    <th class="cell text-center">Status</th>
+                    <th class="cell text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% if switch_requests %}
+                    {% for r in switch_requests %}
+                    <tr>
+                      <td class="cell">{{ r.machine_no or '-' }}</td>
+                      <td class="cell">{{ r.from_part_no or '-' }}</td>
+                      <td class="cell">{{ r.to_part_no or '-' }}</td>
+                      <td class="cell">{{ r.requested_at or '-' }}</td>
+                      <td class="cell">{{ r.requested_by or '-' }}</td>
+                      <td class="cell text-center">
+                        {% if r.approval_flag == 1 %}
+                          <span class="badge bg-success">Approved</span>
+                        {% elif r.approval_flag == -1 %}
+                          <span class="badge bg-danger">Denied</span>
+                        {% else %}
+                          <span class="badge bg-warning text-dark">Pending</span>
+                        {% endif %}
+                      </td>
+                      <td class="cell text-center">
+                        {% if r.approval_flag == 0 %}
+                          <form method="post" action="{{ url_for('ppc_approve_switch_request') }}#switch-request-tab-pane" class="d-inline">
+                            <input type="hidden" name="machine_no" value="{{ r.machine_no or '' }}">
+                            <input type="hidden" name="from_part_no" value="{{ r.from_part_no or '' }}">
+                            <input type="hidden" name="to_part_no" value="{{ r.to_part_no or '' }}">
+                            <input type="hidden" name="requested_at_us" value="{{ r.requested_at_us }}">
+                            <button type="submit" class="btn btn-sm btn-success" onclick="return confirm('Approve this switch request?');">Approve</button>
+                          </form>
+                          <form method="post" action="{{ url_for('ppc_deny_switch_request') }}#switch-request-tab-pane" class="d-inline">
+                            <input type="hidden" name="machine_no" value="{{ r.machine_no or '' }}">
+                            <input type="hidden" name="from_part_no" value="{{ r.from_part_no or '' }}">
+                            <input type="hidden" name="to_part_no" value="{{ r.to_part_no or '' }}">
+                            <input type="hidden" name="requested_at_us" value="{{ r.requested_at_us }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Deny this switch request?');">Deny</button>
+                          </form>
+                        {% else %}
+                          <span class="text-muted small">-</span>
+                        {% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  {% else %}
+                    <tr>
+                      <td class="cell text-center" colspan="7">No switch requests.</td>
+                    </tr>
+                  {% endif %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -555,6 +630,45 @@
               <span id="update_plan_max_value">-</span>
             </small>
           </div>
+          <div class="mb-3">
+            <div class="form-check form-switch">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                role="switch"
+                id="job_allocator_add_backup_plan"
+                name="add_backup_plan"
+                value="1"
+              >
+              <label class="form-check-label" for="job_allocator_add_backup_plan">Add Back Up Plan</label>
+            </div>
+          </div>
+          <div class="mb-3 d-none" id="job_allocator_backup_plan_section">
+            <h6 class="mt-0 mb-3">Back Up Plan</h6>
+            <div class="mb-3">
+              <label for="update_backup_part_no" class="form-label">Part No</label>
+              <select class="form-select" id="update_backup_part_no" name="back_up_part_no">
+                <option value="">Select part</option>
+                {% for p in monthly_planner_parts %}
+                <option
+                  value="{{ p.part_no }}"
+                  data-remaining="{{ p.remaining|default(0, true) }}"
+                  data-cycle="{{ p.cycle_time_sec|default(0, true) }}"
+                >
+                  {{ p.part_no }}{% if p.part_name %} - {{ p.part_name }}{% endif %}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="update_backup_schedule" class="form-label">Schedule</label>
+              <input type="number" class="form-control" id="update_backup_schedule" name="back_up_schedule" min="0" step="1" placeholder="0">
+              <small class="text-muted d-block mt-1">
+                Max allowed (schedule − allocated):
+                <span id="update_backup_max_value">-</span>
+              </small>
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
@@ -571,6 +685,86 @@
     var partSelectEl = document.getElementById('update_plan_part_no');
     var planInputEl = document.getElementById('update_plan_plan');
     var maxSpanEl = document.getElementById('update_plan_max_value');
+    var backupPlanCheckboxEl = document.getElementById('job_allocator_add_backup_plan');
+    var backupPlanSectionEl = document.getElementById('job_allocator_backup_plan_section');
+    var backupPartSelectEl = document.getElementById('update_backup_part_no');
+    var backupScheduleInputEl = document.getElementById('update_backup_schedule');
+    var backupMaxSpanEl = document.getElementById('update_backup_max_value');
+    var primaryPartNoForBackupFilter = '';
+
+    function applyBackupPartExclusion() {
+      if (!backupPartSelectEl) return;
+      var pn = primaryPartNoForBackupFilter || '';
+      for (var i = 0; i < backupPartSelectEl.options.length; i++) {
+        var opt = backupPartSelectEl.options[i];
+        var isExcluded = !!pn && opt.value === pn;
+        opt.disabled = isExcluded;
+        opt.style.display = isExcluded ? 'none' : '';
+      }
+      if (pn && backupPartSelectEl.value === pn) {
+        backupPartSelectEl.value = '';
+        if (backupScheduleInputEl) backupScheduleInputEl.value = '';
+      }
+    }
+
+    function updateBackupStateFromPartAndPlan() {
+      if (!backupPartSelectEl || !backupScheduleInputEl) return;
+      var opt = backupPartSelectEl.options[backupPartSelectEl.selectedIndex];
+      var maxVal = 0;
+      if (opt) {
+        var attr = opt.getAttribute('data-remaining');
+        maxVal = parseInt(attr, 10);
+        if (!Number.isFinite(maxVal) || maxVal < 0) {
+          maxVal = 0;
+        }
+      }
+      if (maxVal > 0) {
+        backupScheduleInputEl.max = String(maxVal);
+      } else {
+        backupScheduleInputEl.removeAttribute('max');
+      }
+      if (backupMaxSpanEl) {
+        backupMaxSpanEl.textContent = maxVal > 0 ? String(maxVal) : '-';
+      }
+      var v = parseFloat(backupScheduleInputEl.value || '0');
+      if (Number.isFinite(v) && maxVal > 0 && v > maxVal) {
+        backupScheduleInputEl.value = String(maxVal);
+      }
+    }
+
+    function toggleBackupSection(enabled) {
+      if (backupPlanSectionEl) backupPlanSectionEl.classList.toggle('d-none', !enabled);
+      if (backupPartSelectEl) {
+        backupPartSelectEl.required = !!enabled;
+        backupPartSelectEl.disabled = !enabled;
+      }
+      if (backupScheduleInputEl) {
+        backupScheduleInputEl.required = !!enabled;
+        backupScheduleInputEl.disabled = !enabled;
+        if (!enabled) {
+          backupScheduleInputEl.value = '';
+          backupScheduleInputEl.removeAttribute('max');
+        }
+      }
+      if (enabled) {
+        applyBackupPartExclusion();
+        updateBackupStateFromPartAndPlan();
+      }
+    }
+
+    toggleBackupSection(false);
+
+    if (backupPlanCheckboxEl) {
+      backupPlanCheckboxEl.addEventListener('change', function () {
+        toggleBackupSection(this.checked);
+      });
+    }
+    if (backupPartSelectEl) {
+      backupPartSelectEl.addEventListener('change', updateBackupStateFromPartAndPlan);
+    }
+    if (backupScheduleInputEl) {
+      backupScheduleInputEl.addEventListener('input', updateBackupStateFromPartAndPlan);
+    }
 
     function updatePlanStateFromPartAndPlan() {
       if (!partSelectEl || !planInputEl) return;
@@ -599,7 +793,24 @@
     }
 
     if (partSelectEl) {
-      partSelectEl.addEventListener('change', updatePlanStateFromPartAndPlan);
+      partSelectEl.addEventListener('change', function () {
+        // Keep Back Up Plan dropdown in sync with the currently selected primary part.
+        // This matters even if machine primary part is initially unassigned.
+        primaryPartNoForBackupFilter = partSelectEl.value || '';
+        applyBackupPartExclusion();
+
+        var backupEnabledNow = !!(
+          backupPartSelectEl &&
+          backupPartSelectEl.value &&
+          backupScheduleInputEl &&
+          String(backupScheduleInputEl.value || '').trim() !== '' &&
+          backupPartSelectEl.value !== primaryPartNoForBackupFilter
+        );
+        if (backupPlanCheckboxEl) backupPlanCheckboxEl.checked = backupEnabledNow;
+        toggleBackupSection(backupEnabledNow);
+
+        updatePlanStateFromPartAndPlan();
+      });
     }
     if (planInputEl) {
       planInputEl.addEventListener('input', function () {
@@ -618,6 +829,8 @@
         }
         var partNo = this.getAttribute('data-part-no') || '';
         var plan = this.getAttribute('data-plan') || '';
+        var backupPartNo = this.getAttribute('data-back-up-part-no') || '';
+        var backupSchedule = this.getAttribute('data-back-up-schedule') || '';
         document.getElementById('update_plan_machine_no_input').value = machineNo;
         document.getElementById('update_plan_machine_no').textContent = machineNo;
         if (partSelectEl) {
@@ -625,6 +838,18 @@
         }
         if (planInputEl) {
           planInputEl.value = plan;
+        }
+        primaryPartNoForBackupFilter = partNo || '';
+        applyBackupPartExclusion();
+        if (backupScheduleInputEl) backupScheduleInputEl.value = backupSchedule || '';
+        var backupEnabled = !!(backupPartNo && String(backupSchedule).trim() !== '' && backupPartNo !== primaryPartNoForBackupFilter);
+        if (backupPartSelectEl) backupPartSelectEl.value = backupEnabled ? (backupPartNo || '') : '';
+        if (backupScheduleInputEl && !backupEnabled) backupScheduleInputEl.value = '';
+        if (backupPlanCheckboxEl) backupPlanCheckboxEl.checked = backupEnabled;
+        toggleBackupSection(backupEnabled);
+        if (!backupEnabled) {
+          if (backupPartSelectEl) backupPartSelectEl.value = '';
+          if (backupScheduleInputEl) backupScheduleInputEl.value = '';
         }
         updatePlanStateFromPartAndPlan();
         var modal = new bootstrap.Modal(document.getElementById('updatePlanModal'));
@@ -643,6 +868,11 @@
       var partTab = document.getElementById('part-tab');
       if (partTab && typeof bootstrap !== 'undefined') {
         bootstrap.Tab.getOrCreateInstance(partTab).show();
+      }
+    } else if (hash === '#switch-request-tab-pane') {
+      var switchRequestTab = document.getElementById('switch-request-tab');
+      if (switchRequestTab && typeof bootstrap !== 'undefined') {
+        bootstrap.Tab.getOrCreateInstance(switchRequestTab).show();
       }
     }
 

@@ -1,0 +1,154 @@
+{% extends "index.html" %}
+
+{% block content %}
+<div class="app-content pt-3 p-md-3 p-lg-4">
+  <div class="container-xl">
+    <ul class="nav nav-tabs mb-3" id="departmentTabs" role="tablist">
+      {% for tab in department_tabs %}
+      <li class="nav-item" role="presentation">
+        <a
+          class="nav-link {% if selected_tab == tab %}active{% endif %}"
+          href="{{ url_for('department', tab=tab) }}"
+          role="tab"
+          aria-selected="{% if selected_tab == tab %}true{% else %}false{% endif %}"
+        >
+          {{ tab }}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+
+    <div class="app-card app-card-settings shadow-sm">
+      <div class="app-card-body p-4">
+        <div class="table-responsive">
+          <table class="table table-hover table-bordered mb-0">
+            <thead>
+              <tr>
+                <th class="cell">Machine No</th>
+                <th class="cell">Part No</th>
+                <th class="cell text-end">Plan</th>
+                <th class="cell text-end">Produced</th>
+                <th class="cell text-end">Allocated Shift</th>
+                <th class="cell">Job Created At</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if department_rows %}
+                {% for row in department_rows %}
+                <tr>
+                  <td class="cell">
+                    <a
+                      href="#"
+                      class="department-machine-link"
+                      data-machine-no="{{ row.machine_no or '' }}"
+                      data-part-no="{{ row.part_no or '' }}"
+                      data-plan="{{ row.plan if row.plan is not none else '' }}"
+                      data-back-up-part-no="{{ row.back_up_part_no or '' }}"
+                      data-back-up-schedule="{{ row.back_up_schedule if row.back_up_schedule is not none else '' }}"
+                      data-has-pending-switch="{{ '1' if row.has_pending_switch else '0' }}"
+                    >
+                      {{ row.machine_no or '-' }}
+                    </a>
+                  </td>
+                  <td class="cell">{{ row.part_no or '-' }}</td>
+                  <td class="cell text-end">{{ row.plan if row.plan is not none else '-' }}</td>
+                  <td class="cell text-end">{{ row.produced if row.produced is not none else '-' }}</td>
+                  <td class="cell text-end">{{ row.shift_allocated if row.shift_allocated is not none else '-' }}</td>
+                  <td class="cell">{{ row.job_created_at or '-' }}</td>
+                </tr>
+                {% endfor %}
+              {% else %}
+                <tr>
+                  <td class="cell text-center" colspan="6">No allocated jobs found for {{ selected_tab }}.</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="departmentSwitchModal" tabindex="-1" aria-labelledby="departmentSwitchModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="departmentSwitchModalLabel">Switch Plan</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <div class="small text-muted">Machine No</div>
+          <div id="switch_machine_no" class="fw-semibold">-</div>
+        </div>
+        <div class="mb-3">
+          <div class="small text-muted">Primary plan and schedule</div>
+          <div id="switch_primary_info" class="fw-semibold">-</div>
+        </div>
+        <div class="mb-0">
+          <div class="small text-muted">Back Up plan and schedule</div>
+          <div id="switch_backup_info" class="fw-semibold">-</div>
+        </div>
+        <div class="mt-2 small text-warning d-none" id="switch_pending_hint">
+          A switch request is already pending for this machine.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <form method="post" action="{{ url_for('department_switch_request') }}" class="m-0">
+          <input type="hidden" name="tab" value="{{ selected_tab }}">
+          <input type="hidden" name="machine_no" id="switch_form_machine_no">
+          <input type="hidden" name="from_part_no" id="switch_form_from_part_no">
+          <input type="hidden" name="to_part_no" id="switch_form_to_part_no">
+          <button type="submit" class="btn btn-primary" id="switch_submit_btn" disabled>Switch</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var links = document.querySelectorAll('.department-machine-link');
+    var modalEl = document.getElementById('departmentSwitchModal');
+    if (!modalEl || !links.length) return;
+    var modal = new bootstrap.Modal(modalEl);
+
+    var machineNoEl = document.getElementById('switch_machine_no');
+    var primaryInfoEl = document.getElementById('switch_primary_info');
+    var backupInfoEl = document.getElementById('switch_backup_info');
+    var formMachineNoEl = document.getElementById('switch_form_machine_no');
+    var formFromPartEl = document.getElementById('switch_form_from_part_no');
+    var formToPartEl = document.getElementById('switch_form_to_part_no');
+    var submitBtn = document.getElementById('switch_submit_btn');
+    var pendingHintEl = document.getElementById('switch_pending_hint');
+
+    links.forEach(function (link) {
+      link.addEventListener('click', function (e) {
+        e.preventDefault();
+        var machineNo = this.getAttribute('data-machine-no') || '';
+        var partNo = this.getAttribute('data-part-no') || '';
+        var plan = this.getAttribute('data-plan') || '';
+        var backupPartNo = this.getAttribute('data-back-up-part-no') || '';
+        var backupSchedule = this.getAttribute('data-back-up-schedule') || '';
+        var hasPendingSwitch = (this.getAttribute('data-has-pending-switch') || '0') === '1';
+        var hasBackup = !!backupPartNo && String(backupSchedule).trim() !== '';
+
+        machineNoEl.textContent = machineNo || '-';
+        primaryInfoEl.textContent = partNo ? (partNo + ' / ' + (plan || '0')) : '-';
+        backupInfoEl.textContent = hasBackup ? (backupPartNo + ' / ' + backupSchedule) : '-';
+
+        formMachineNoEl.value = machineNo;
+        formFromPartEl.value = partNo;
+        formToPartEl.value = hasBackup ? backupPartNo : '';
+        submitBtn.disabled = (!hasBackup) || hasPendingSwitch;
+        if (pendingHintEl) {
+          pendingHintEl.classList.toggle('d-none', !hasPendingSwitch);
+        }
+
+        modal.show();
+      });
+    });
+  });
+</script>
+{% endblock %}
