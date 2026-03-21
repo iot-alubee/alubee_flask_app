@@ -1,9 +1,10 @@
 pandas
 openpyxl
 streamlit
-plotly 
-google-cloud-bigquery 
-pyarrow 
+plotly
+google-cloud-bigquery
+pyarrow
 db-dtypes
 flask
 flask-login
+gunicorn

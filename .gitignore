@@ -1,0 +1,16 @@
+# Local credentials (never commit)
+bq_service_acc.json
+*service*acc*.json
+*credentials*.json
+
+# SQLite auth DB (ephemeral on Cloud Run; do not commit local DB)
+instance/
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*

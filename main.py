@@ -19,6 +19,7 @@ import re
 import secrets
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
 
@@ -47,11 +48,42 @@ SHIFT_OPTIONS = ["Shift I", "Shift II"]
 DEPARTMENT_OPTIONS = ["PDC", "CNC"]
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "change-this-to-a-random-secret-key-in-production"
+# Cloud Run / reverse proxies: trust X-Forwarded-* for correct scheme and URLs
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+_default_secret = "change-this-to-a-random-secret-key-in-production"
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", _default_secret).strip() or _default_secret
+if app.config["SECRET_KEY"] == _default_secret:
+    app.logger.warning(
+        "SECRET_KEY env var not set; using default (sessions reset on redeploy). Set SECRET_KEY in Cloud Run."
+    )
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 login_manager.login_message = "Please log in to access this page."
+
+
+def _ensure_auth_database():
+    """Create SQLite auth tables and default admin. Runs on import so Gunicorn/Cloud Run work
+    (the ``if __name__ == '__main__'`` block is never executed under gunicorn)."""
+    try:
+        auth.init_db()
+        existing = auth.get_user_by_email("admin@alubee.com")
+        if existing is None:
+            auth.create_user("admin@alubee.com", "admin123", "admin")
+        else:
+            conn = auth.get_db()
+            conn.execute(
+                "UPDATE users SET role = 'admin' WHERE email = ?",
+                ("admin@alubee.com",),
+            )
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        app.logger.exception("Auth database initialization failed: %s", e)
+
+
+_ensure_auth_database()
 
 # Page key for each route (used for permission checks)
 PAGE_KEYS = [p[0] for p in auth.PAGE_KEYS]
@@ -120,25 +152,39 @@ def _init_bigquery_client():
 
     # 3) Application Default Credentials (Cloud Run, GCE, `gcloud auth application-default login`)
     try:
+        project = (os.environ.get("GOOGLE_CLOUD_PROJECT") or "").strip() or None
+        if project:
+            return bigquery.Client(project=project)
         return bigquery.Client()
     except Exception as e:
         app.logger.warning("BigQuery: ADC / default client failed: %s", e)
         return None
 
 
-bq_client = _init_bigquery_client()
+# Lazy init: creating bigquery.Client() at import can block on metadata/ADC and miss Cloud Run's
+# startup deadline before Gunicorn binds to PORT. Initialize on first use instead.
+_bq_singleton = None
+_bq_initialized = False
+
+
+def get_bq_client():
+    global _bq_singleton, _bq_initialized
+    if not _bq_initialized:
+        _bq_initialized = True
+        _bq_singleton = _init_bigquery_client()
+    return _bq_singleton
 
 
 def _get_max_date_machine_idle():
     """Return the latest Date in fact_machine_idle, or None on error. Cached briefly."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return None
     cache_key = ("max_date_machine_idle",)
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
     try:
-        job = bq_client.query(
+        job = get_bq_client().query(
             "SELECT MAX(Date) AS max_date FROM `alubee_production_marts.fact_machine_idle`"
         )
         row = next(job.result(), None)
@@ -155,7 +201,7 @@ def _get_max_date_machine_idle():
 
 def fetch_machine_idle_rows(date_str=None, shift=None, unit=None, department=None):
     """Fetch machine idle rows from BigQuery with optional filters. Results cached briefly."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return []
     cache_key = ("machine_idle", date_str, shift, unit, department)
     cached = _cache_get(cache_key)
@@ -205,7 +251,7 @@ def fetch_machine_idle_rows(date_str=None, shift=None, unit=None, department=Non
     job_config = bigquery.QueryJobConfig(query_parameters=params)
 
     try:
-        result = bq_client.query(query, job_config=job_config).result()
+        result = get_bq_client().query(query, job_config=job_config).result()
         rows = [dict(row) for row in result]
         app.logger.info("Machine idle: date=%s unit=%s shift=%s dept=%s -> %d rows", date_str, unit, shift, department, len(rows))
         _cache_set(cache_key, rows)
@@ -220,7 +266,7 @@ IOT_MASTER_TABLE = "alubee_production_marts.fact_iot_master"
 
 def fetch_iot_master_rows(date_str=None, shift=None, unit=None, department=None):
     """Fetch production/IoT rows from fact_iot_master. Same filters as machine idle (date, shift, unit, department)."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return []
     cache_key = ("iot_master", date_str, shift, unit, department)
     cached = _cache_get(cache_key)
@@ -266,7 +312,7 @@ def fetch_iot_master_rows(date_str=None, shift=None, unit=None, department=None)
     job_config = bigquery.QueryJobConfig(query_parameters=params)
 
     try:
-        result = bq_client.query(query, job_config=job_config).result()
+        result = get_bq_client().query(query, job_config=job_config).result()
         rows = [dict(row) for row in result]
         app.logger.info("IoT master: date=%s unit=%s shift=%s dept=%s -> %d rows", date_str, unit, shift, department, len(rows))
         _cache_set(cache_key, rows)
@@ -282,7 +328,7 @@ def fetch_realtime_latest_rows(
     bypass_cache: bool = False,
 ):
     """Fetch realtime latest per machine for Production dashboard."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return []
 
     cache_key = ("realtime_master_catalog", unit, department)
@@ -403,7 +449,7 @@ def fetch_realtime_latest_rows(
 
     job_config = bigquery.QueryJobConfig(query_parameters=params) if params else None
     try:
-        result = bq_client.query(query, job_config=job_config).result()
+        result = get_bq_client().query(query, job_config=job_config).result()
         rows = []
         for row in result:
             rows.append(
@@ -635,7 +681,7 @@ DIM_MACHINE_MAPPER_TABLE = "alubee-prod.alubee_production_marts.dim_machine_mapp
 
 def fetch_monthly_planner(plan_month: str | None = None, department: str | None = None):
     """Fetch rows from monthly planner table, optionally filtered by plan_month (yyyy-mm) and department."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return []
 
     base_query = f"""
@@ -673,7 +719,7 @@ def fetch_monthly_planner(plan_month: str | None = None, department: str | None 
         job_config = bigquery.QueryJobConfig(query_parameters=params)
 
     try:
-        result = bq_client.query(base_query, job_config=job_config).result()
+        result = get_bq_client().query(base_query, job_config=job_config).result()
         return [
             {
                 "plan_id": row["plan_id"],
@@ -699,11 +745,11 @@ def fetch_monthly_planner(plan_month: str | None = None, department: str | None 
 
 def _get_next_plan_id():
     """Return next plan_id as MAX(plan_id)+1."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return None
     query = f"SELECT IFNULL(MAX(plan_id), 0) AS max_id FROM `{MONTHLY_PLANNER_TABLE}`"
     try:
-        row = next(bq_client.query(query).result(), None)
+        row = next(get_bq_client().query(query).result(), None)
         max_id = row["max_id"] if row and row["max_id"] is not None else 0
         return int(max_id) + 1
     except Exception as e:
@@ -713,7 +759,7 @@ def _get_next_plan_id():
 
 def _get_part_by_part_no(part_no: str):
     """Return dict with part_no, part_name (and other fields) for part_no or None. Table uses part_no as key (no part_id)."""
-    if bq_client is None or not part_no:
+    if get_bq_client() is None or not part_no:
         return None
     query = f"""SELECT part_no, part_name, department, components_in_fixture, cycle_time_sec, qty_per_hour
         FROM `{PARTS_TABLE}` WHERE part_no = @part_no LIMIT 1"""
@@ -721,7 +767,7 @@ def _get_part_by_part_no(part_no: str):
         query_parameters=[bigquery.ScalarQueryParameter("part_no", "STRING", part_no)]
     )
     try:
-        row = next(bq_client.query(query, job_config=job_config).result(), None)
+        row = next(get_bq_client().query(query, job_config=job_config).result(), None)
         if not row:
             return None
         return {
@@ -745,7 +791,7 @@ def _get_part_id_by_part_no(part_no: str):
 
 def _get_plan_by_id(plan_id: int):
     """Return single monthly plan dict by plan_id or None."""
-    if bq_client is None or plan_id is None:
+    if get_bq_client() is None or plan_id is None:
         return None
     query = f"""
         SELECT plan_id, plan_month, department, part_no, part_name, schedule, opening_qty,
@@ -757,7 +803,7 @@ def _get_plan_by_id(plan_id: int):
         query_parameters=[bigquery.ScalarQueryParameter("plan_id", "INT64", plan_id)]
     )
     try:
-        row = next(bq_client.query(query, job_config=job_config).result(), None)
+        row = next(get_bq_client().query(query, job_config=job_config).result(), None)
         if not row:
             return None
         return {
@@ -782,7 +828,7 @@ def _get_plan_by_id(plan_id: int):
 
 def fetch_machines(department: str | None = None, unit: str | None = None):
     """Fetch machines from fact_job_allocator, optionally filtered by department and unit."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return []
     base_query = f"""
         SELECT machine_no, unit, department
@@ -802,7 +848,7 @@ def fetch_machines(department: str | None = None, unit: str | None = None):
 
     job_config = bigquery.QueryJobConfig(query_parameters=params) if params else None
     try:
-        result = bq_client.query(base_query, job_config=job_config).result()
+        result = get_bq_client().query(base_query, job_config=job_config).result()
         return [
             {
                 "machine_no": row["machine_no"],
@@ -838,7 +884,7 @@ def fetch_job_allocations(department: str | None = None, unit: str | None = None
     """Fetch latest job allocation row per machine_no (fact-style history; show only last updated).
     Filtered by department and unit. job_created_at is returned formatted in IST.
     """
-    if bq_client is None:
+    if get_bq_client() is None:
         return []
     base_query = """
         SELECT part_no, plan, produced, shift_allocated, consumed_shift, job_created_at, machine_no,
@@ -865,7 +911,7 @@ def fetch_job_allocations(department: str | None = None, unit: str | None = None
 
     job_config = bigquery.QueryJobConfig(query_parameters=params) if params else None
     try:
-        result = bq_client.query(base_query, job_config=job_config).result()
+        result = get_bq_client().query(base_query, job_config=job_config).result()
     except Exception as e1:
         app.logger.warning("BigQuery fetch_job_allocations failed: %s", e1)
         return []
@@ -895,7 +941,7 @@ def fetch_job_allocations(department: str | None = None, unit: str | None = None
 
 def fetch_department_job_allocations(selected_tab: str):
     """Fetch latest allocated jobs per machine for the selected department tab."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return []
 
     tab = (selected_tab or "PDC").strip().upper()
@@ -943,7 +989,7 @@ def fetch_department_job_allocations(selected_tab: str):
         ]
     )
     try:
-        result = bq_client.query(query, job_config=job_config).result()
+        result = get_bq_client().query(query, job_config=job_config).result()
     except Exception as e:
         app.logger.warning("BigQuery fetch_department_job_allocations failed: %s", e)
         return []
@@ -968,7 +1014,7 @@ def fetch_department_job_allocations(selected_tab: str):
 
 def fetch_switch_requests():
     """Fetch switch requests for PPC review."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return []
     query = f"""
         SELECT
@@ -983,7 +1029,7 @@ def fetch_switch_requests():
         ORDER BY requested_at DESC
     """
     try:
-        result = bq_client.query(query).result()
+        result = get_bq_client().query(query).result()
     except Exception as e:
         app.logger.warning("BigQuery fetch_switch_requests failed: %s", e)
         return []
@@ -1013,7 +1059,7 @@ def fetch_switch_requests():
 
 def fetch_parts_count(department: str | None = None) -> int:
     """Return total number of parts (for Part Manager pagination), with optional department filter."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return 0
     base_query = f"SELECT COUNT(*) AS n FROM `{PARTS_TABLE}`"
     params = []
@@ -1022,7 +1068,7 @@ def fetch_parts_count(department: str | None = None) -> int:
         params.append(bigquery.ScalarQueryParameter("department", "STRING", department))
     job_config = bigquery.QueryJobConfig(query_parameters=params) if params else None
     try:
-        row = next(bq_client.query(base_query, job_config=job_config).result(), None)
+        row = next(get_bq_client().query(base_query, job_config=job_config).result(), None)
         return int(row["n"]) if row and row["n"] is not None else 0
     except Exception as e:
         app.logger.warning("BigQuery fetch_parts_count failed: %s", e)
@@ -1035,7 +1081,7 @@ def fetch_parts(
     offset: int = 0,
 ):
     """Fetch parts from BigQuery, optionally filtered by department. Optional limit/offset for pagination."""
-    if bq_client is None:
+    if get_bq_client() is None:
         return []
     base_query = f"""
         SELECT
@@ -1057,7 +1103,7 @@ def fetch_parts(
         base_query += f" LIMIT {int(limit)} OFFSET {int(offset)}"
     job_config = bigquery.QueryJobConfig(query_parameters=params) if params else None
     try:
-        result = bq_client.query(base_query, job_config=job_config).result()
+        result = get_bq_client().query(base_query, job_config=job_config).result()
         return [
             {
                 "id": row["part_no"],
@@ -1077,7 +1123,7 @@ def fetch_parts(
 
 def _part_no_exists(part_no: str, exclude_part_no: str = None) -> bool:
     """Return True if part_no is already used. If exclude_part_no is set, ignore that part (for edit)."""
-    if not part_no or bq_client is None:
+    if not part_no or get_bq_client() is None:
         return False
     query = f"SELECT 1 FROM `{PARTS_TABLE}` WHERE part_no = @part_no"
     params = [bigquery.ScalarQueryParameter("part_no", "STRING", part_no)]
@@ -1087,7 +1133,7 @@ def _part_no_exists(part_no: str, exclude_part_no: str = None) -> bool:
     query += " LIMIT 1"
     try:
         row = next(
-            bq_client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=params)).result(),
+            get_bq_client().query(query, job_config=bigquery.QueryJobConfig(query_parameters=params)).result(),
             None,
         )
         return row is not None
@@ -1098,7 +1144,7 @@ def _part_no_exists(part_no: str, exclude_part_no: str = None) -> bool:
 
 def _plan_exists(plan_month: str, part_no: str, exclude_plan_id: int | None = None) -> bool:
     """Return True if a plan already exists for given month and part_no."""
-    if not plan_month or not part_no or bq_client is None:
+    if not plan_month or not part_no or get_bq_client() is None:
         return False
     query = f"SELECT 1 FROM `{MONTHLY_PLANNER_TABLE}` WHERE plan_month = @plan_month AND part_no = @part_no"
     params = [
@@ -1111,7 +1157,7 @@ def _plan_exists(plan_month: str, part_no: str, exclude_plan_id: int | None = No
     query += " LIMIT 1"
     try:
         row = next(
-            bq_client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=params)).result(),
+            get_bq_client().query(query, job_config=bigquery.QueryJobConfig(query_parameters=params)).result(),
             None,
         )
         return row is not None
@@ -1292,7 +1338,7 @@ def ppc_job_allocator_update_plan():
     Rows are identified by machine_no (plus department/unit); job_id is no longer used.
     """
     require_page("ppc")
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("ppc") + "#daily-tab-pane")
 
@@ -1381,7 +1427,7 @@ def ppc_job_allocator_update_plan():
 
     # Enforce plan <= (schedule - allocated) from Monthly Planner for this month/part/department
     remaining_allowed = None
-    if bq_client is not None:
+    if get_bq_client() is not None:
         mp_query = f"""
             SELECT schedule, allocated
             FROM `{MONTHLY_PLANNER_TABLE}`
@@ -1397,7 +1443,7 @@ def ppc_job_allocator_update_plan():
         ]
         mp_job_cfg = bigquery.QueryJobConfig(query_parameters=mp_params)
         try:
-            mp_row = next(bq_client.query(mp_query, job_config=mp_job_cfg).result(), None)
+            mp_row = next(get_bq_client().query(mp_query, job_config=mp_job_cfg).result(), None)
             if mp_row is not None:
                 schedule = mp_row.get("schedule") or 0
                 allocated = mp_row.get("allocated") or 0
@@ -1431,7 +1477,7 @@ def ppc_job_allocator_update_plan():
     # Compute shift_allocated from Part Manager qty_per_hour:
     # hours = plan / qty_per_hour, shift = hours / 12 (1 shift = 12 hours)
     shift_required = 0.0
-    if bq_client is not None and part_no and plan_val > 0:
+    if get_bq_client() is not None and part_no and plan_val > 0:
         qty_query = f"""
             SELECT qty_per_hour
             FROM `{PARTS_TABLE}`
@@ -1441,7 +1487,7 @@ def ppc_job_allocator_update_plan():
         qty_params = [bigquery.ScalarQueryParameter("part_no", "STRING", part_no)]
         qty_job_cfg = bigquery.QueryJobConfig(query_parameters=qty_params)
         try:
-            qty_row = next(bq_client.query(qty_query, job_config=qty_job_cfg).result(), None)
+            qty_row = next(get_bq_client().query(qty_query, job_config=qty_job_cfg).result(), None)
             if qty_row is not None:
                 qty_per_hour = qty_row.get("qty_per_hour") or 0
                 try:
@@ -1458,7 +1504,7 @@ def ppc_job_allocator_update_plan():
 
     # Fetch current plan for this (machine_no, part_no, unit, department) to compute delta for Monthly Planner
     old_plan = None
-    if bq_client is not None:
+    if get_bq_client() is not None:
         old_query = f"""
             SELECT plan
             FROM `{JOB_ALLOCATOR_TABLE}`
@@ -1477,7 +1523,7 @@ def ppc_job_allocator_update_plan():
         ]
         try:
             old_row = next(
-                bq_client.query(
+                get_bq_client().query(
                     old_query,
                     job_config=bigquery.QueryJobConfig(query_parameters=old_params),
                 ).result(),
@@ -1526,7 +1572,7 @@ def ppc_job_allocator_update_plan():
           )
     """
     try:
-        update_job = bq_client.query(update_query, job_config=job_config)
+        update_job = get_bq_client().query(update_query, job_config=job_config)
         update_job.result()
         affected = getattr(update_job, "num_dml_affected_rows", None) or 0
     except Exception as e:
@@ -1555,14 +1601,14 @@ def ppc_job_allocator_update_plan():
             )
         """
         try:
-            bq_client.query(insert_query, job_config=job_config).result()
+            get_bq_client().query(insert_query, job_config=job_config).result()
             flash("Job allocation saved.", "success")
         except Exception as e:
             app.logger.warning("BigQuery insert job allocation failed: %s", e)
             flash("Save failed. Please try again.", "danger")
 
     # Reflect in Monthly Planner: add allocated_delta to allocated for this month/department/part_no
-    if bq_client is not None and allocated_delta != 0:
+    if get_bq_client() is not None and allocated_delta != 0:
         mp_update = f"""
             UPDATE `{MONTHLY_PLANNER_TABLE}`
             SET allocated = COALESCE(allocated, 0) + @allocated_delta
@@ -1577,7 +1623,7 @@ def ppc_job_allocator_update_plan():
             bigquery.ScalarQueryParameter("part_no", "STRING", part_no),
         ]
         try:
-            bq_client.query(mp_update, job_config=bigquery.QueryJobConfig(query_parameters=mp_params)).result()
+            get_bq_client().query(mp_update, job_config=bigquery.QueryJobConfig(query_parameters=mp_params)).result()
         except Exception as e:
             app.logger.warning("BigQuery update monthly planner allocated failed: %s", e)
 
@@ -1588,7 +1634,7 @@ def ppc_job_allocator_update_plan():
 @login_required
 def ppc_monthly_planner_add():
     require_page("ppc")
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("ppc") + "#monthly-tab-pane")
 
@@ -1722,7 +1768,7 @@ def ppc_monthly_planner_add():
         ]
     )
     try:
-        bq_client.query(query, job_config=job_config).result()
+        get_bq_client().query(query, job_config=job_config).result()
         flash("Monthly plan added successfully.", "success")
     except Exception as exc:
         app.logger.warning("BigQuery monthly planner insert failed: %s", exc)
@@ -1765,7 +1811,7 @@ def ppc_edit_monthly_plan(plan_id):
         )
 
     # POST: update plan
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("ppc_edit_monthly_plan", plan_id=plan_id))
 
@@ -1881,7 +1927,7 @@ def ppc_edit_monthly_plan(plan_id):
         ]
     )
     try:
-        bq_client.query(query, job_config=job_config).result()
+        get_bq_client().query(query, job_config=job_config).result()
         flash("Monthly plan updated successfully.", "success")
     except Exception as exc:
         app.logger.warning("BigQuery monthly planner update failed: %s", exc)
@@ -1894,7 +1940,7 @@ def ppc_edit_monthly_plan(plan_id):
 @login_required
 def ppc_delete_monthly_plan(plan_id):
     require_page("ppc")
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("ppc") + "#monthly-tab-pane")
 
@@ -1903,7 +1949,7 @@ def ppc_delete_monthly_plan(plan_id):
         query_parameters=[bigquery.ScalarQueryParameter("plan_id", "INT64", plan_id)]
     )
     try:
-        bq_client.query(query, job_config=job_config).result()
+        get_bq_client().query(query, job_config=job_config).result()
         flash("Monthly plan deleted.", "success")
     except Exception as exc:
         app.logger.warning("BigQuery monthly planner delete failed: %s", exc)
@@ -1917,7 +1963,7 @@ def ppc_delete_monthly_plan(plan_id):
 def ppc_delete_monthly_plans_bulk():
     """Delete one or more monthly plans by plan_id. Form: plan_ids (list)."""
     require_page("ppc")
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("ppc") + "#monthly-tab-pane")
 
@@ -1941,7 +1987,7 @@ def ppc_delete_monthly_plans_bulk():
         query_parameters=[bigquery.ArrayQueryParameter("plan_ids", "INT64", plan_ids)]
     )
     try:
-        bq_client.query(query, job_config=job_config).result()
+        get_bq_client().query(query, job_config=job_config).result()
         n = len(plan_ids)
         flash(f"{n} monthly plan(s) deleted." if n > 1 else "Monthly plan deleted.", "success")
     except Exception as exc:
@@ -2012,7 +2058,7 @@ def ppc_create_part():
             flash(e, "danger")
         return redirect(url_for("ppc") + "#part-tab-pane")
 
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("ppc") + "#part-tab-pane")
 
@@ -2052,7 +2098,7 @@ def ppc_create_part():
     )
 
     try:
-        bq_client.query(query, job_config=job_config).result()
+        get_bq_client().query(query, job_config=job_config).result()
         flash("Part created successfully.", "success")
     except Exception as exc:
         app.logger.warning("BigQuery insert part failed: %s", exc)
@@ -2066,7 +2112,7 @@ def ppc_create_part():
 @login_required
 def ppc_delete_part(part_no: str):
     require_page("ppc")
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("ppc") + "#part-tab-pane")
 
@@ -2077,7 +2123,7 @@ def ppc_delete_part(part_no: str):
         ]
     )
     try:
-        bq_client.query(query, job_config=job_config).result()
+        get_bq_client().query(query, job_config=job_config).result()
         flash("Part deleted successfully.", "success")
     except Exception as exc:
         app.logger.warning("BigQuery delete part %s failed: %s", part_no, exc)
@@ -2141,7 +2187,7 @@ def ppc_edit_part(part_no: str):
                 flash(e, "danger")
             return redirect(url_for("ppc_edit_part", part_no=part_no))
 
-        if bq_client is None:
+        if get_bq_client() is None:
             flash("BigQuery is not configured.", "danger")
             return redirect(url_for("ppc_edit_part", part_no=part_no))
 
@@ -2175,7 +2221,7 @@ def ppc_edit_part(part_no: str):
         )
 
         try:
-            bq_client.query(query, job_config=job_config).result()
+            get_bq_client().query(query, job_config=job_config).result()
             flash("Part updated successfully.", "success")
             return redirect(url_for("ppc") + "#part-tab-pane")
         except Exception as exc:
@@ -2185,7 +2231,7 @@ def ppc_edit_part(part_no: str):
             return redirect(url_for("ppc_edit_part", part_no=part_no))
 
     # GET
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("ppc") + "#part-tab-pane")
 
@@ -2221,7 +2267,7 @@ def department():
 def department_switch_request():
     # Reuse PPC permission so existing PPC users can access this action.
     require_page("ppc")
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("index", planTab="PDC") + "#plan-tab-pane")
 
@@ -2259,7 +2305,7 @@ def department_switch_request():
     )
     try:
         duplicate_row = next(
-            bq_client.query(duplicate_query, job_config=duplicate_cfg).result(),
+            get_bq_client().query(duplicate_query, job_config=duplicate_cfg).result(),
             None,
         )
         if duplicate_row is not None:
@@ -2282,7 +2328,7 @@ def department_switch_request():
         ]
     )
     try:
-        bq_client.query(query, job_config=job_config).result()
+        get_bq_client().query(query, job_config=job_config).result()
         flash("Switch request raised.", "success")
     except Exception as e:
         app.logger.warning("BigQuery insert switch request failed: %s", e)
@@ -2295,7 +2341,7 @@ def department_switch_request():
 @login_required
 def ppc_approve_switch_request():
     require_page("ppc")
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("ppc") + "#switch-request-tab-pane")
 
@@ -2329,7 +2375,7 @@ def ppc_approve_switch_request():
     )
     latest_row = None
     try:
-        latest_row = next(bq_client.query(latest_query, job_config=latest_cfg).result(), None)
+        latest_row = next(get_bq_client().query(latest_query, job_config=latest_cfg).result(), None)
     except Exception as e:
         app.logger.warning("BigQuery fetch latest allocation for approve failed: %s", e)
 
@@ -2367,7 +2413,7 @@ def ppc_approve_switch_request():
     )
     qty_row = None
     try:
-        qty_row = next(bq_client.query(qty_query, job_config=qty_cfg).result(), None)
+        qty_row = next(get_bq_client().query(qty_query, job_config=qty_cfg).result(), None)
     except Exception as e:
         app.logger.warning("BigQuery fetch qty_per_hour for approve failed: %s", e)
     qty_per_hour = float((qty_row or {}).get("qty_per_hour") or 0)
@@ -2403,7 +2449,7 @@ def ppc_approve_switch_request():
         ]
     )
     try:
-        bq_client.query(insert_query, job_config=insert_cfg).result()
+        get_bq_client().query(insert_query, job_config=insert_cfg).result()
     except Exception as e:
         app.logger.warning("BigQuery insert switched allocation failed: %s", e)
         flash("Failed to apply switch.", "danger")
@@ -2427,7 +2473,7 @@ def ppc_approve_switch_request():
         ]
     )
     try:
-        bq_client.query(update_query, job_config=update_cfg).result()
+        get_bq_client().query(update_query, job_config=update_cfg).result()
         flash("Switch request approved and job card updated.", "success")
     except Exception as e:
         app.logger.warning("BigQuery approve switch request update failed: %s", e)
@@ -2440,7 +2486,7 @@ def ppc_approve_switch_request():
 @login_required
 def ppc_deny_switch_request():
     require_page("ppc")
-    if bq_client is None:
+    if get_bq_client() is None:
         flash("BigQuery is not configured.", "danger")
         return redirect(url_for("ppc") + "#switch-request-tab-pane")
 
@@ -2475,7 +2521,7 @@ def ppc_deny_switch_request():
         ]
     )
     try:
-        bq_client.query(query, job_config=job_config).result()
+        get_bq_client().query(query, job_config=job_config).result()
         flash("Switch request denied.", "success")
     except Exception as e:
         app.logger.warning("BigQuery deny switch request failed: %s", e)
@@ -2610,17 +2656,7 @@ def settings_highlights():
 
 
 if __name__ == "__main__":
-    auth.init_db()
-    existing = auth.get_user_by_email("admin@alubee.com")
-    if existing is None:
-        auth.create_user("admin@alubee.com", "admin123", "admin")
-    else:
-        conn = auth.get_db()
-        conn.execute(
-            "UPDATE users SET role = 'admin' WHERE email = ?",
-            ("admin@alubee.com",),
-        )
-        conn.commit()
-        conn.close()
+    _ensure_auth_database()
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug = os.environ.get("FLASK_DEBUG", "").strip().lower() in ("1", "true", "yes")
+    app.run(host="0.0.0.0", port=port, debug=debug)

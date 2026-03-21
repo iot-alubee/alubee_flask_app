@@ -54,13 +54,22 @@ gcloud run deploy alubee-app \
   --project $PROJECT_ID
 ```
 
-## 3. Environment variables (optional)
+## 3. Environment variables
 
-- **GOOGLE_CLOUD_PROJECT** – Set automatically by Cloud Run. If you need to override, set it in Cloud Run → Edit & deploy new revision → Variables.
-- **SECRET_KEY** – Set in Cloud Run **Variables** or **Secrets** for Flask session security (override the default in code).
-- **BQ_CREDENTIALS_PATH** – Do **not** set in production. Only for local dev when using a key file outside the repo.
+- **SECRET_KEY** – **Required for stable sessions in production.** Set a long random string in Cloud Run → Variables (or Secrets). If unset, the app uses a default and logs a warning; users may be logged out on each deploy.
+- **GOOGLE_CLOUD_PROJECT** – Usually set automatically by Cloud Run. Override only if needed.
+- **BQ_CREDENTIALS_PATH** – Do **not** set on Cloud Run. Only for local dev with a key file outside the repo.
 
-## 4. Local development (run from repo root, not this folder)
+### SQLite auth database on Cloud Run
+
+Users are stored in `instance/app.db` on the container filesystem. That storage is **ephemeral**: new revisions or extra instances each get an empty DB, and the default **admin@alubee.com** user is recreated on startup. For durable accounts across deploys or multiple instances, move auth to Cloud SQL, Firestore, or another managed store (future change).
+
+## 4. What the container runs
+
+- **`requirements.txt`** includes **gunicorn** (the Dockerfile starts `gunicorn main:app`).
+- **`main.py`** initializes the auth database **on import**, so login works under gunicorn (not only when running `python main.py`).
+
+## 5. Local development (from this folder)
 
 Use one of:
 
