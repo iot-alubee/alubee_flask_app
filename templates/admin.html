@@ -59,6 +59,7 @@
 								<th>Email</th>
 								<th>Role</th>
 								<th>Allowed pages (viewers)</th>
+								<th class="text-end">Actions</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -73,9 +74,23 @@
 											—
 										{% endif %}
 									</td>
+									<td class="text-end">
+										{% if u.id == current_user_id %}
+										<span class="text-muted small">You</span>
+										{% else %}
+										<form
+											method="post"
+											action="{{ url_for('admin_delete_user', user_id=u.id) }}"
+											class="d-inline"
+											onsubmit="return confirm('Delete user {{ u.email }}? This cannot be undone.');"
+										>
+											<button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+										</form>
+										{% endif %}
+									</td>
 								</tr>
 							{% else %}
-								<tr><td colspan="3" class="text-muted">No users yet.</td></tr>
+								<tr><td colspan="4" class="text-muted">No users yet.</td></tr>
 							{% endfor %}
 						</tbody>
 					</table>

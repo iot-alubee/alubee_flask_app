@@ -1374,7 +1374,23 @@ def admin():
         users=users,
         page_options=auth.PAGE_KEYS,
         active_nav="admin",
+        current_user_id=current_user.id,
     )
+
+
+@app.route("/admin/delete/<int:user_id>", methods=["POST"])
+@login_required
+def admin_delete_user(user_id):
+    require_page("admin")
+    if int(user_id) == int(current_user.id):
+        flash("You cannot delete your own account.", "danger")
+        return redirect(url_for("admin"))
+    ok, result = auth.delete_user(user_id)
+    if not ok:
+        flash(result, "danger")
+    else:
+        flash(f"User {result} deleted.", "success")
+    return redirect(url_for("admin"))
 
 
 @app.route("/realtime")

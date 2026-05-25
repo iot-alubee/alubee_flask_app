@@ -251,3 +251,29 @@ def set_password(user_id, new_password):
     )
     conn.commit()
     conn.close()
+
+
+def delete_user(user_id: int) -> tuple[bool, str]:
+    """Delete user and related rows. Returns (ok, error_message)."""
+    uid = int(user_id)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, email, role FROM users WHERE id = ?", (uid,)
+        ).fetchone()
+        if not row:
+            return False, "User not found."
+        if (row["role"] or "") == "admin":
+            admin_count = conn.execute(
+                "SELECT COUNT(*) AS n FROM users WHERE role = 'admin'"
+            ).fetchone()["n"]
+            if admin_count <= 1:
+                return False, "Cannot delete the only admin account."
+        conn.execute("DELETE FROM viewer_permissions WHERE user_id = ?", (uid,))
+        conn.execute("DELETE FROM password_reset_tokens WHERE user_id = ?", (uid,))
+        conn.execute("DELETE FROM user_preferences WHERE user_id = ?", (uid,))
+        conn.execute("DELETE FROM users WHERE id = ?", (uid,))
+        conn.commit()
+        return True, row["email"]
+    finally:
+        conn.close()
