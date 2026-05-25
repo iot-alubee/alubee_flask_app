@@ -942,6 +942,7 @@ def _fetch_security_od_requests_inner(ist_day, db):
     rows = []
     for _, d, snap_id in buf:
         md_ok = (d.get("md_status") or "").strip().upper() == "APPROVED"
+        fully_ok = md_ok
         distance_km = d.get("distance_km")
         if distance_km is None and d.get("odo_out") is not None and d.get("odo_in") is not None:
             try:
@@ -962,8 +963,9 @@ def _fetch_security_od_requests_inner(ist_day, db):
                 "uses_company_vehicle": _request_uses_company_vehicle(d),
                 "manager": d.get("manager") or "",
                 "manager_status": d.get("manager_status") or "",
+                "jmd_status": d.get("jmd_status") or "",
                 "md_status": d.get("md_status") or "",
-                "fully_approved": md_ok,
+                "fully_approved": fully_ok,
                 "security_out_at": _format_firestore_time_ist_12h(
                     d.get("security_out_at")
                 ),
@@ -1077,8 +1079,9 @@ def _security_record_od_gate(request_id: str, action: str, odo_reading):
         d = snap.to_dict() or {}
         if (d.get("type") or "").strip().upper() != "OD":
             return False, "Not an OD request"
-        if (d.get("md_status") or "").strip().upper() != "APPROVED":
-            return False, "OD is not fully approved yet"
+        md_ok = (d.get("md_status") or "").strip().upper() == "APPROVED"
+        if not md_ok:
+            return False, "OD is not fully approved yet (MD approval pending)"
         needs_odo = _request_uses_company_vehicle(d)
         odo = None
         if needs_odo:
