@@ -876,6 +876,43 @@ def _parse_security_table_date(date_str, default_day):
     return default_day
 
 
+SECURITY_UNIT_I_EMAIL = "security.1@alubee.com"
+SECURITY_UNIT_II_EMAIL = "security.2@alubee.com"
+
+
+def _parse_security_unit_filter(unit: str) -> str | None:
+    """Map UI unit filter to Firestore ``jmd_route``: JMD1 = Unit I, JMD2 = Unit II."""
+    key = (unit or "").strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+    if key in ("i", "uniti", "jmd1", "jmdi"):
+        return "JMD1"
+    if key in ("ii", "unitii", "jmd2", "jmdii"):
+        return "JMD2"
+    return None
+
+
+def _security_unit_for_session(unit_arg: str | None) -> tuple[str, bool]:
+    """
+    Unit filter for Security page: unit-i | unit-ii, and whether the user may change it.
+    security.1@alubee.com → Unit I (locked); security.2@alubee.com → Unit II (locked).
+    """
+    email = (getattr(current_user, "email", None) or "").strip().lower()
+    if email == SECURITY_UNIT_I_EMAIL:
+        return "unit-i", True
+    if email == SECURITY_UNIT_II_EMAIL:
+        return "unit-ii", True
+    unit = (unit_arg or "unit-i").strip().lower()
+    if unit not in ("unit-i", "unit-ii"):
+        unit = "unit-i"
+    return unit, False
+
+
+def _request_jmd_route(d: dict) -> str:
+    route = (d.get("jmd_route") or "").strip().upper()
+    if route in ("JMD1", "JMD2"):
+        return route
+    return "JMD1"
+
+
 def _format_firestore_date_ist(val):
     """Date only in IST: DD-MM-YYYY."""
     if val is None:
@@ -926,7 +963,25 @@ def _get_firestore_client():
         return None, str(e)
 
 
-def _fetch_security_od_requests_inner(ist_day, db):
+def _od_approval_statuses_for_display(d: dict) -> tuple[str, str]:
+    """JMD/MD labels for security dashboard (fixes legacy MD-deny overwriting jmd_status)."""
+    jmd_raw = (d.get("jmd_status") or "").strip()
+    md_raw = (d.get("md_status") or "").strip()
+    jmd_u = jmd_raw.upper()
+    md_u = md_raw.upper()
+    # MD can only deny after JMD approved; old bot wrote jmd_status=DENIED on MD deny
+    if md_u == "DENIED" and jmd_u == "DENIED":
+        return "APPROVED", md_raw or "DENIED"
+    return jmd_raw, md_raw
+
+
+def _fetch_security_od_requests_inner(
+    ist_day,
+    db,
+    *,
+    jmd_route_filter: str | None = None,
+    company_vehicle_only: bool = False,
+):
     buf = []
     for snap in db.collection("requests").stream():
         d = snap.to_dict() or {}
@@ -936,6 +991,10 @@ def _fetch_security_od_requests_inner(ist_day, db):
         if ist_day is not None:
             if _requested_datetime_ist_date(ts) != ist_day:
                 continue
+        if jmd_route_filter and _request_jmd_route(d) != jmd_route_filter:
+            continue
+        if company_vehicle_only and not _request_uses_company_vehicle(d):
+            continue
         buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
     buf.sort(key=lambda x: x[0], reverse=True)
     buf = buf[:200]
@@ -949,6 +1008,7 @@ def _fetch_security_od_requests_inner(ist_day, db):
                 distance_km = round(float(d["odo_in"]) - float(d["odo_out"]), 2)
             except (TypeError, ValueError):
                 distance_km = None
+        jmd_display, md_display = _od_approval_statuses_for_display(d)
         rows.append(
             {
                 "request_id": d.get("request_id") or snap_id,
@@ -963,8 +1023,9 @@ def _fetch_security_od_requests_inner(ist_day, db):
                 "uses_company_vehicle": _request_uses_company_vehicle(d),
                 "manager": d.get("manager") or "",
                 "manager_status": d.get("manager_status") or "",
-                "jmd_status": d.get("jmd_status") or "",
-                "md_status": d.get("md_status") or "",
+                "jmd_status": jmd_display,
+                "md_status": md_display,
+                "jmd_route": _request_jmd_route(d),
                 "fully_approved": fully_ok,
                 "security_out_at": _format_firestore_time_ist_12h(
                     d.get("security_out_at")
@@ -1030,14 +1091,25 @@ def _parse_odo_reading(value):
     return n, None
 
 
-def fetch_security_od_requests(ist_day=None):
+def fetch_security_od_requests(
+    ist_day=None,
+    *,
+    jmd_route_filter: str | None = None,
+    company_vehicle_only: bool = False,
+):
     """Load OD requests for one IST calendar day (``requested_datetime``), newest first, cap 200."""
     db, err = _get_firestore_client()
     if err:
         return [], err
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_fetch_security_od_requests_inner, ist_day, db)
+            future = executor.submit(
+                _fetch_security_od_requests_inner,
+                ist_day,
+                db,
+                jmd_route_filter=jmd_route_filter,
+                company_vehicle_only=company_vehicle_only,
+            )
             return future.result(timeout=25), None
     except TimeoutError:
         app.logger.error("Firestore security OD fetch timed out")
@@ -3674,10 +3746,16 @@ def security():
         tab = "on-duty"
     ist_today = _ist_today_date()
     selected_day = _parse_security_table_date(request.args.get("date"), ist_today)
+    selected_unit, unit_filter_locked = _security_unit_for_session(request.args.get("unit"))
+    jmd_route_filter = _parse_security_unit_filter(selected_unit)
     od_requests = []
     firestore_error = None
-    if tab == "on-duty":
-        od_requests, firestore_error = fetch_security_od_requests(ist_day=selected_day)
+    if tab in ("on-duty", "vehicle-request"):
+        od_requests, firestore_error = fetch_security_od_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+            company_vehicle_only=(tab == "vehicle-request"),
+        )
     return render_template(
         "security.html",
         active_nav="security",
@@ -3686,6 +3764,8 @@ def security():
         od_requests=od_requests,
         firestore_error=firestore_error,
         selected_date_iso=selected_day.strftime("%Y-%m-%d"),
+        selected_unit=selected_unit,
+        unit_filter_locked=unit_filter_locked,
     )
 
 
