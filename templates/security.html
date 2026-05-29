@@ -160,6 +160,38 @@
 	.security-od-toolbar select[name="unit"] {
 		min-width: 11rem;
 	}
+	.security-od-table.security-table-has-select {
+		--security-freeze-select-w: 2.75rem;
+	}
+	.security-od-table thead th.cell-freeze-select,
+	.security-od-table tbody td.cell-freeze-select {
+		position: sticky;
+		left: 0;
+		z-index: 2;
+		width: var(--security-freeze-select-w);
+		min-width: var(--security-freeze-select-w);
+		max-width: var(--security-freeze-select-w);
+		text-align: center;
+		vertical-align: middle;
+		padding-left: 0.5rem;
+		padding-right: 0.5rem;
+		background-color: #fff;
+	}
+	.security-od-table thead th.cell-freeze-select {
+		z-index: 6;
+		background-color: #e9ecef;
+	}
+	.security-od-table.security-table-has-select thead th.cell-freeze-emp,
+	.security-od-table.security-table-has-select tbody td.cell-freeze-emp {
+		left: var(--security-freeze-select-w);
+	}
+	.security-od-table.security-table-has-select thead th.cell-freeze-action,
+	.security-od-table.security-table-has-select tbody td.cell-freeze-action {
+		left: calc(var(--security-freeze-select-w) + var(--security-freeze-emp-w));
+	}
+	.security-od-table tbody tr:hover > td.cell-freeze-select {
+		background-color: #f8f9fa !important;
+	}
 </style>
 <div class="app-content pt-3 p-md-3 p-lg-4">
 	<div class="container-xl">
@@ -176,13 +208,13 @@
 			{% endfor %}
 		</ul>
 
-		{% if selected_tab in ('on-duty', 'vehicle-request') and firestore_error %}
+		{% if firestore_error %}
 		<div class="alert alert-warning mb-3 shadow-sm" role="alert">
-			<strong>Could not load OD requests.</strong> {{ firestore_error }}
+			<strong>Could not load requests.</strong> {{ firestore_error }}
 		</div>
 		{% endif %}
 
-		{% if selected_tab in ('on-duty', 'vehicle-request') %}
+		{% if selected_tab == 'on-duty' %}
 		<div class="app-card app-card-settings security-od-card">
 			<div class="app-card-body p-3 security-od-toolbar">
 				<form method="get" action="{{ url_for('security') }}" class="d-flex flex-wrap align-items-end gap-3">
@@ -210,17 +242,30 @@
 						</select>
 						{% endif %}
 					</div>
-					<div class="d-flex gap-2">
+					<div class="d-flex gap-2 align-items-center">
 						<button type="submit" class="btn btn-sm btn-primary px-3">Refresh</button>
 						<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="security-od-refresh-today" title="Load today (IST)">Today</button>
+						{% if can_delete_requests %}
+						<button type="button" class="btn btn-sm btn-outline-danger px-2" id="security-od-delete-btn" disabled title="Delete selected requests" aria-label="Delete selected requests">
+							<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trash" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+								<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0A.5.5 0 0 1 9 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+								<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+							</svg>
+						</button>
+						{% endif %}
 					</div>
 				</form>
 			</div>
 			<div class="app-card-body p-0 p-md-0">
 				<div class="table-responsive security-od-scroll">
-					<table class="table table-hover security-od-table mb-0">
+					<table class="table table-hover security-od-table mb-0{% if can_delete_requests %} security-table-has-select{% endif %}">
 						<thead class="table-light">
 							<tr>
+								{% if can_delete_requests %}
+								<th scope="col" class="cell-freeze-select">
+									<input type="checkbox" class="form-check-input security-select-all" id="security-od-select-all" title="Select all" aria-label="Select all requests">
+								</th>
+								{% endif %}
 								<th scope="col" class="cell-freeze-emp">Employee</th>
 								<th scope="col" class="cell-freeze-action">Action</th>
 								<th scope="col">Requested Date</th>
@@ -240,6 +285,11 @@
 							{% if od_requests %}
 							{% for row in od_requests %}
 							<tr>
+								{% if can_delete_requests %}
+								<td class="cell cell-freeze-select">
+									<input type="checkbox" class="form-check-input security-request-select security-od-request-select" value="{{ row.request_id }}" aria-label="Select request">
+								</td>
+								{% endif %}
 								<td class="cell cell-freeze-emp">{{ (row.employee_name or row.employee_id)|sentence_case }}</td>
 								<td class="cell cell-freeze-action">
 									{% if row.security_in_at %}
@@ -267,13 +317,7 @@
 							{% endfor %}
 							{% else %}
 							<tr>
-								<td colspan="13" class="cell text-center text-muted py-5">
-									{% if selected_tab == 'vehicle-request' %}
-									No company-vehicle OD requests for this date.
-									{% else %}
-									No OD requests for this date.
-									{% endif %}
-								</td>
+								<td colspan="{% if can_delete_requests %}14{% else %}13{% endif %}" class="cell text-center text-muted py-5">No OD requests for this date.</td>
 							</tr>
 							{% endif %}
 						</tbody>
@@ -282,6 +326,144 @@
 			</div>
 		</div>
 		{% endif %}
+
+		{% if selected_tab == 'visitor-request' %}
+		<div class="app-card app-card-settings security-od-card">
+			<div class="app-card-body p-3 security-od-toolbar">
+				<form method="get" action="{{ url_for('security') }}" class="d-flex flex-wrap align-items-end gap-3">
+					<input type="hidden" name="tab" value="visitor-request">
+					<div>
+						<label for="security-visitor-date" class="form-label small mb-1">Coming on (IST)</label>
+						<input id="security-visitor-date" type="date" name="date" class="form-control form-control-sm" value="{{ selected_date_iso }}">
+					</div>
+					<div>
+						<label for="security-visitor-unit" class="form-label small mb-1">Unit</label>
+						{% if unit_filter_locked %}
+						<input type="hidden" name="unit" value="{{ selected_unit }}">
+						<input
+							id="security-visitor-unit"
+							type="text"
+							class="form-control form-control-sm bg-light"
+							value="{% if selected_unit == 'unit-ii' %}Unit II{% else %}Unit I{% endif %}"
+							readonly
+							aria-readonly="true"
+						>
+						{% else %}
+						<select id="security-visitor-unit" name="unit" class="form-select form-select-sm">
+							<option value="unit-i" {% if selected_unit == 'unit-i' %}selected{% endif %}>Unit I</option>
+							<option value="unit-ii" {% if selected_unit == 'unit-ii' %}selected{% endif %}>Unit II</option>
+						</select>
+						{% endif %}
+					</div>
+					<div class="d-flex gap-2 align-items-center">
+						<button type="submit" class="btn btn-sm btn-primary px-3">Refresh</button>
+						<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="security-visitor-refresh-today" title="Load today (IST)">Today</button>
+						{% if can_delete_requests %}
+						<button type="button" class="btn btn-sm btn-outline-danger px-2" id="security-visitor-delete-btn" disabled title="Delete selected requests" aria-label="Delete selected requests">
+							<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trash" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+								<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0A.5.5 0 0 1 9 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+								<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+							</svg>
+						</button>
+						{% endif %}
+					</div>
+				</form>
+			</div>
+			<div class="app-card-body p-0 p-md-0">
+				<div class="table-responsive security-od-scroll">
+					<table class="table table-hover security-od-table mb-0{% if can_delete_requests %} security-table-has-select{% endif %}">
+						<thead class="table-light">
+							<tr>
+								{% if can_delete_requests %}
+								<th scope="col" class="cell-freeze-select">
+									<input type="checkbox" class="form-check-input security-select-all" id="security-visitor-select-all" title="Select all" aria-label="Select all requests">
+								</th>
+								{% endif %}
+								<th scope="col" class="cell-freeze-emp">Employee</th>
+								<th scope="col" class="cell-freeze-action">Action</th>
+								<th scope="col" class="cell-date">Coming On</th>
+								<th scope="col">Department</th>
+								<th scope="col">People</th>
+								<th scope="col" class="cell-visiting">Visitor Names</th>
+								<th scope="col" class="cell-visiting">Coming From</th>
+								<th scope="col">Visiting To</th>
+								<th scope="col">Coming For</th>
+								<th scope="col">Guest WhatsApp</th>
+								<th scope="col">JMD Approval</th>
+								<th scope="col">MD Approval</th>
+								<th scope="col" class="cell-date">In time</th>
+								<th scope="col" class="cell-date">Out time</th>
+							</tr>
+						</thead>
+						<tbody>
+							{% if visitor_requests %}
+							{% for row in visitor_requests %}
+							<tr>
+								{% if can_delete_requests %}
+								<td class="cell cell-freeze-select">
+									<input type="checkbox" class="form-check-input security-request-select security-visitor-request-select" value="{{ row.request_id }}" aria-label="Select request">
+								</td>
+								{% endif %}
+								<td class="cell cell-freeze-emp">{{ (row.employee_name or row.employee_id)|sentence_case }}</td>
+								<td class="cell cell-freeze-action">
+									{% if row.security_out_at %}
+									<button type="button" class="btn btn-sm btn-secondary" disabled>Closed</button>
+									{% elif row.security_in_at %}
+									<button type="button" class="btn btn-sm btn-warning visitor-gate-btn" data-request-id="{{ row.request_id }}" data-action="out">OUT</button>
+									{% elif row.fully_approved and row.has_visitor_otp %}
+									<button type="button" class="btn btn-sm btn-success visitor-gate-btn" data-request-id="{{ row.request_id }}" data-action="in" data-requires-otp="true">IN</button>
+									{% elif row.fully_approved %}
+									<button type="button" class="btn btn-sm btn-outline-secondary" disabled title="OTP not generated yet">IN</button>
+									{% else %}
+									<button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Enabled when MD approval is Approved">IN</button>
+									{% endif %}
+								</td>
+								<td class="cell cell-date">{{ row.coming_on_date or '—' }}</td>
+								<td class="cell cell-dept">{{ row.department }}</td>
+								<td class="cell">{{ row.people_count or '—' }}</td>
+								<td class="cell cell-visiting">{{ row.visitor_names or '—' }}</td>
+								<td class="cell cell-visiting">{{ row.coming_from|sentence_case }}</td>
+								<td class="cell">{{ row.visiting_to }}</td>
+								<td class="cell">{{ row.coming_for|sentence_case }}</td>
+								<td class="cell">{{ row.guest_phone or '—' }}</td>
+								<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status }}</td>
+								<td class="cell {{ row.md_status|approval_cell_class }}">{{ row.md_status }}</td>
+								<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
+								<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
+							</tr>
+							{% endfor %}
+							{% else %}
+							<tr>
+								<td colspan="{% if can_delete_requests %}15{% else %}14{% endif %}" class="cell text-center text-muted py-5">No visitor requests for this date.</td>
+							</tr>
+							{% endif %}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+		{% endif %}
+
+		<div class="modal fade" id="visitorOtpModal" tabindex="-1" aria-labelledby="visitorOtpModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title" id="visitorOtpModalLabel">Visitor entry OTP</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body">
+						<p class="text-muted small mb-3">Enter the 6-digit OTP sent to the employee and guest after MD approval.</p>
+						<label for="visitor-otp-input" class="form-label fw-semibold">OTP</label>
+						<input type="text" class="form-control" id="visitor-otp-input" maxlength="6" inputmode="numeric" pattern="[0-9]*" placeholder="000000" autocomplete="off">
+						<div class="invalid-feedback d-block" id="visitor-otp-error" style="display: none;"></div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+						<button type="button" class="btn btn-success" id="visitor-otp-submit">Confirm IN</button>
+					</div>
+				</div>
+			</div>
+		</div>
 
 		<div class="modal fade" id="odOdoModal" tabindex="-1" aria-labelledby="odOdoModalLabel" aria-hidden="true">
 			<div class="modal-dialog modal-dialog-centered">
@@ -323,6 +505,7 @@
 	window.addEventListener("resize", syncSecurityFreezeColumns);
 
 	var endpoint = {{ url_for('security_od_gate') | tojson }};
+	var deleteRequestEndpoint = {{ url_for('security_delete_request') | tojson }};
 	var securityTodayUrl = {{ url_for('security', tab=selected_tab, unit=selected_unit) | tojson }};
 	var todayBtn = document.getElementById("security-od-refresh-today");
 	if (todayBtn) {
@@ -420,6 +603,228 @@
 			pendingGate = { requestId: null, action: null, btn: null, requiresOdo: false };
 		});
 	}
+
+	var visitorEndpoint = {{ url_for('security_visitor_gate') | tojson }};
+	var visitorGateUnit = {{ selected_unit | tojson }};
+	var visitorTodayUrl = {{ url_for('security', tab='visitor-request', unit=selected_unit) | tojson }};
+	var visitorTodayBtn = document.getElementById("security-visitor-refresh-today");
+	if (visitorTodayBtn) {
+		visitorTodayBtn.addEventListener("click", function () {
+			window.location.href = visitorTodayUrl;
+		});
+	}
+
+	var visitorOtpModalEl = document.getElementById("visitorOtpModal");
+	var visitorOtpInput = document.getElementById("visitor-otp-input");
+	var visitorOtpError = document.getElementById("visitor-otp-error");
+	var visitorOtpSubmit = document.getElementById("visitor-otp-submit");
+	var pendingVisitorGate = { requestId: null, action: null, btn: null };
+	var visitorOtpModal = visitorOtpModalEl && typeof bootstrap !== "undefined"
+		? bootstrap.Modal.getOrCreateInstance(visitorOtpModalEl)
+		: null;
+
+	function showVisitorOtpError(msg) {
+		if (!visitorOtpError) return;
+		visitorOtpError.textContent = msg || "";
+		visitorOtpError.style.display = msg ? "block" : "none";
+		if (visitorOtpInput) visitorOtpInput.classList.toggle("is-invalid", !!msg);
+	}
+
+	function postVisitorGate(requestId, action, otp, onError) {
+		var body = { request_id: requestId, action: action, unit: visitorGateUnit || "unit-i" };
+		if (otp !== null && otp !== undefined) {
+			body.otp = otp;
+		}
+		return fetch(visitorEndpoint, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		})
+			.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+			.then(function (x) {
+				if (!x.ok || !x.j.ok) {
+					if (onError) onError((x.j && x.j.error) || "Could not save.");
+					return false;
+				}
+				window.location.reload();
+				return true;
+			})
+			.catch(function () {
+				if (onError) onError("Network error.");
+				return false;
+			});
+	}
+
+	function submitVisitorIn() {
+		if (!pendingVisitorGate.requestId) return;
+		var otp = visitorOtpInput ? visitorOtpInput.value.trim() : "";
+		if (!otp) {
+			showVisitorOtpError("Please enter the OTP.");
+			return;
+		}
+		showVisitorOtpError("");
+		if (visitorOtpSubmit) visitorOtpSubmit.disabled = true;
+		postVisitorGate(pendingVisitorGate.requestId, "in", otp, function (msg) {
+			showVisitorOtpError(msg);
+			if (visitorOtpSubmit) visitorOtpSubmit.disabled = false;
+		}).then(function (ok) {
+			if (ok && visitorOtpModal) visitorOtpModal.hide();
+		});
+	}
+
+	if (visitorOtpSubmit) {
+		visitorOtpSubmit.addEventListener("click", submitVisitorIn);
+	}
+	if (visitorOtpInput) {
+		visitorOtpInput.addEventListener("keydown", function (e) {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				submitVisitorIn();
+			}
+		});
+	}
+	if (visitorOtpModalEl) {
+		visitorOtpModalEl.addEventListener("hidden.bs.modal", function () {
+			showVisitorOtpError("");
+			if (visitorOtpInput) {
+				visitorOtpInput.value = "";
+				visitorOtpInput.classList.remove("is-invalid");
+			}
+			if (visitorOtpSubmit) visitorOtpSubmit.disabled = false;
+			if (pendingVisitorGate.btn) pendingVisitorGate.btn.disabled = false;
+			pendingVisitorGate = { requestId: null, action: null, btn: null };
+		});
+	}
+
+	document.querySelectorAll(".visitor-gate-btn").forEach(function (btn) {
+		btn.addEventListener("click", function () {
+			var requestId = this.getAttribute("data-request-id");
+			var action = this.getAttribute("data-action");
+			if (!requestId || !action) return;
+			if (action === "out") {
+				if (!confirm("Record visitor OUT at gate?")) return;
+				btn.disabled = true;
+				postVisitorGate(requestId, "out", null, function (msg) {
+					alert(msg);
+					btn.disabled = false;
+				});
+				return;
+			}
+			if (!visitorOtpModal) {
+				var fallback = prompt("Enter visitor entry OTP:");
+				if (fallback === null) return;
+				btn.disabled = true;
+				postVisitorGate(requestId, "in", fallback.trim(), function (msg) {
+					alert(msg);
+					btn.disabled = false;
+				});
+				return;
+			}
+			pendingVisitorGate = { requestId: requestId, action: action, btn: btn };
+			if (visitorOtpInput) {
+				visitorOtpInput.value = "";
+				visitorOtpInput.classList.remove("is-invalid");
+			}
+			showVisitorOtpError("");
+			if (visitorOtpSubmit) visitorOtpSubmit.disabled = false;
+			visitorOtpModal.show();
+			setTimeout(function () { if (visitorOtpInput) visitorOtpInput.focus(); }, 300);
+		});
+	});
+
+	function postDeleteRequestOnce(requestId) {
+		return fetch(deleteRequestEndpoint, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ request_id: requestId }),
+		})
+			.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+			.then(function (x) {
+				if (!x.ok || !x.j.ok) {
+					throw new Error((x.j && x.j.error) || "Could not delete.");
+				}
+				return true;
+			});
+	}
+
+	function initSecurityDeleteToolbar(selectAllEl, rowSelectClass, deleteBtnEl) {
+		if (!deleteBtnEl) return;
+
+		function selectedIds() {
+			return Array.prototype.map.call(
+				document.querySelectorAll(rowSelectClass + ":checked"),
+				function (el) { return (el.value || "").trim(); }
+			).filter(Boolean);
+		}
+
+		function updateDeleteBtn() {
+			deleteBtnEl.disabled = selectedIds().length === 0;
+		}
+
+		if (selectAllEl) {
+			selectAllEl.addEventListener("change", function () {
+				var checked = selectAllEl.checked;
+				document.querySelectorAll(rowSelectClass).forEach(function (cb) {
+					cb.checked = checked;
+				});
+				updateDeleteBtn();
+			});
+		}
+
+		document.querySelectorAll(rowSelectClass).forEach(function (cb) {
+			cb.addEventListener("change", function () {
+				if (selectAllEl) {
+					var all = document.querySelectorAll(rowSelectClass);
+					var nChecked = document.querySelectorAll(rowSelectClass + ":checked").length;
+					selectAllEl.checked = all.length > 0 && nChecked === all.length;
+					selectAllEl.indeterminate = nChecked > 0 && nChecked < all.length;
+				}
+				updateDeleteBtn();
+			});
+		});
+
+		deleteBtnEl.addEventListener("click", function () {
+			var ids = selectedIds();
+			if (!ids.length) {
+				alert("Select at least one request to delete.");
+				return;
+			}
+			var msg = ids.length === 1
+				? "Delete this request permanently? This cannot be undone."
+				: "Delete " + ids.length + " requests permanently? This cannot be undone.";
+			if (!confirm(msg)) return;
+			deleteBtnEl.disabled = true;
+			var chain = Promise.resolve();
+			var failed = null;
+			ids.forEach(function (id) {
+				chain = chain.then(function () {
+					return postDeleteRequestOnce(id);
+				}).catch(function (err) {
+					failed = err.message || "Could not delete.";
+					throw err;
+				});
+			});
+			chain.then(function () {
+				window.location.reload();
+			}).catch(function () {
+				alert(failed || "Could not delete.");
+				updateDeleteBtn();
+			});
+		});
+
+		updateDeleteBtn();
+	}
+
+	initSecurityDeleteToolbar(
+		document.getElementById("security-od-select-all"),
+		".security-od-request-select",
+		document.getElementById("security-od-delete-btn")
+	);
+	initSecurityDeleteToolbar(
+		document.getElementById("security-visitor-select-all"),
+		".security-visitor-request-select",
+		document.getElementById("security-visitor-delete-btn")
+	);
 
 	document.querySelectorAll(".od-gate-btn").forEach(function (btn) {
 		btn.addEventListener("click", function () {

@@ -696,6 +696,13 @@ def _user_has_iot_access():
     return "iot" in pages or "ppc" in pages
 
 
+def _user_is_admin() -> bool:
+    return (
+        current_user.is_authenticated
+        and (getattr(current_user, "role", "") or "").strip().lower() == "admin"
+    )
+
+
 def _user_can_access_security():
     """Security / On Duty: admin/editor, or viewer with 'security' or 'documents' page."""
     if not current_user.is_authenticated:
@@ -876,6 +883,23 @@ def _parse_security_table_date(date_str, default_day):
     return default_day
 
 
+def _visitor_coming_on_date(d: dict):
+    """Visit date from Firestore (DD-MM-YYYY as stored by the WhatsApp bot)."""
+    raw = (d.get("coming_on_date") or d.get("visit_date") or "").strip()
+    if not raw:
+        return None
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _visitor_coming_on_label(d: dict) -> str:
+    return (d.get("coming_on_date") or d.get("visit_date") or "").strip() or "—"
+
+
 SECURITY_UNIT_I_EMAIL = "security.1@alubee.com"
 SECURITY_UNIT_II_EMAIL = "security.2@alubee.com"
 
@@ -911,6 +935,106 @@ def _request_jmd_route(d: dict) -> str:
     if route in ("JMD1", "JMD2"):
         return route
     return "JMD1"
+
+
+def _visitor_matches_unit_filter(d: dict, jmd_route_filter: str | None) -> bool:
+    """Unit tab filter: destination unit (and BOTH shows on both tabs)."""
+    if not jmd_route_filter:
+        return True
+    vt = (d.get("visiting_to") or "").strip().upper()
+    if vt == "BOTH":
+        return True
+    if vt == "UNIT_I":
+        return jmd_route_filter == "JMD1"
+    if vt == "UNIT_II":
+        return jmd_route_filter == "JMD2"
+    return _request_jmd_route(d) == jmd_route_filter
+
+
+def _format_approval_label(status: str) -> str:
+    """Dashboard approval column — avoid sentence_case breaking Roman numerals."""
+    s = (status or "").strip().upper()
+    if s == "APPROVED":
+        return "Approved"
+    if s == "DENIED":
+        return "Denied"
+    if s in ("PENDING", "AWAITING_JMD", "AWAITING_MANAGER"):
+        return "Pending"
+    if s in ("N/A", "NA", ""):
+        return "N/A"
+    return (status or "").strip() or "Pending"
+
+
+def _aggregate_dual_jmd_status(d: dict) -> str:
+    """Single JMD label for Both-units requests (both JMDs must approve)."""
+    i = (d.get("jmd_i_status") or "PENDING").strip().upper()
+    ii = (d.get("jmd_ii_status") or "PENDING").strip().upper()
+    if "DENIED" in (i, ii):
+        return "DENIED"
+    if i == "APPROVED" and ii == "APPROVED":
+        return "APPROVED"
+    jmd = (d.get("jmd_status") or "").strip().upper()
+    if jmd == "APPROVED":
+        return "APPROVED"
+    if jmd == "DENIED":
+        return "DENIED"
+    return "PENDING"
+
+
+def _visitor_visiting_to_label(d: dict) -> str:
+    label = (d.get("visiting_to_label") or "").strip()
+    if label:
+        return label
+    vt = (d.get("visiting_to") or "").strip().upper()
+    return {
+        "UNIT_I": "Unit I",
+        "UNIT_II": "Unit II",
+        "BOTH": "Both",
+    }.get(vt, vt or "—")
+
+
+def _visitor_security_unit_key(d: dict, tab_unit: str) -> str:
+    """Firestore suffix: unit_i | unit_ii for per-unit gate times (Both visits)."""
+    vt = (d.get("visiting_to") or "").strip().upper()
+    tab = (tab_unit or "unit-i").strip().lower()
+    if vt == "BOTH" or d.get("visitor_dual_jmd"):
+        return "unit_i" if tab == "unit-i" else "unit_ii"
+    if vt == "UNIT_II":
+        return "unit_ii"
+    return "unit_i"
+
+
+def _visitor_uses_per_unit_gate(d: dict) -> bool:
+    vt = (d.get("visiting_to") or "").strip().upper()
+    return vt == "BOTH" or bool(d.get("visitor_dual_jmd"))
+
+
+def _visitor_gate_timestamps(d: dict, tab_unit: str) -> tuple:
+    """Return raw Firestore in/out timestamps for the active security tab unit."""
+    uk = _visitor_security_unit_key(d, tab_unit)
+    if _visitor_uses_per_unit_gate(d):
+        in_at = d.get(f"security_in_at_{uk}")
+        out_at = d.get(f"security_out_at_{uk}")
+        if in_at is None and uk == "unit_i" and d.get("security_in_at") is not None:
+            in_at = d.get("security_in_at")
+        if out_at is None and uk == "unit_i" and d.get("security_out_at") is not None:
+            out_at = d.get("security_out_at")
+        return in_at, out_at
+    in_at = d.get("security_in_at")
+    out_at = d.get("security_out_at")
+    if in_at is None:
+        in_at = d.get(f"security_in_at_{uk}")
+    if out_at is None:
+        out_at = d.get(f"security_out_at_{uk}")
+    return in_at, out_at
+
+
+def _visitor_gate_field_names(d: dict, security_unit: str) -> tuple[str, str]:
+    """Firestore field names for IN/OUT on this security tab."""
+    uk = _visitor_security_unit_key(d, security_unit)
+    if _visitor_uses_per_unit_gate(d):
+        return f"security_in_at_{uk}", f"security_out_at_{uk}"
+    return "security_in_at", "security_out_at"
 
 
 def _format_firestore_date_ist(val):
@@ -965,14 +1089,20 @@ def _get_firestore_client():
 
 def _od_approval_statuses_for_display(d: dict) -> tuple[str, str]:
     """JMD/MD labels for security dashboard (fixes legacy MD-deny overwriting jmd_status)."""
+    if d.get("visitor_dual_jmd"):
+        jmd_raw = _aggregate_dual_jmd_status(d)
+        md_raw = (d.get("md_status") or "").strip()
+        return _format_approval_label(jmd_raw), _format_approval_label(md_raw)
     jmd_raw = (d.get("jmd_status") or "").strip()
     md_raw = (d.get("md_status") or "").strip()
     jmd_u = jmd_raw.upper()
     md_u = md_raw.upper()
     # MD can only deny after JMD approved; old bot wrote jmd_status=DENIED on MD deny
     if md_u == "DENIED" and jmd_u == "DENIED":
-        return "APPROVED", md_raw or "DENIED"
-    return jmd_raw, md_raw
+        return _format_approval_label("APPROVED"), _format_approval_label(
+            md_raw or "DENIED"
+        )
+    return _format_approval_label(jmd_raw), _format_approval_label(md_raw)
 
 
 def _fetch_security_od_requests_inner(
@@ -1195,6 +1325,173 @@ def _security_record_od_gate(request_id: str, action: str, odo_reading):
         return True, None
     except Exception as e:
         app.logger.exception("security OD gate update failed")
+        return False, str(e)
+
+
+def _visitor_fully_approved(d: dict) -> bool:
+    return (d.get("md_status") or "").strip().upper() == "APPROVED"
+
+
+def _normalize_visitor_otp(value) -> str:
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if s.isdigit() and len(s) < 6:
+        return s.zfill(6)
+    return s
+
+
+def _fetch_security_visitor_requests_inner(
+    ist_day,
+    db,
+    *,
+    jmd_route_filter: str | None = None,
+    security_tab_unit: str = "unit-i",
+):
+    buf = []
+    for snap in db.collection("requests").stream():
+        d = snap.to_dict() or {}
+        if (d.get("type") or "").strip().upper() != "VISITOR":
+            continue
+        visit_day = _visitor_coming_on_date(d)
+        if ist_day is not None:
+            if visit_day is None or visit_day != ist_day:
+                continue
+        if not _visitor_matches_unit_filter(d, jmd_route_filter):
+            continue
+        ts = d.get("requested_datetime")
+        sort_day = visit_day or datetime.min.date()
+        buf.append((sort_day, _firestore_ts_to_sort_key(ts), d, snap.id))
+    buf.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    buf = buf[:200]
+    rows = []
+    for _, _, d, snap_id in buf:
+        names = d.get("visitor_names") or []
+        if isinstance(names, str):
+            names = [n.strip() for n in names.split(",") if n.strip()]
+        jmd_display, md_display = _od_approval_statuses_for_display(d)
+        in_raw, out_raw = _visitor_gate_timestamps(d, security_tab_unit)
+        rows.append(
+            {
+                "request_id": d.get("request_id") or snap_id,
+                "coming_on_date": _visitor_coming_on_label(d),
+                "requested_datetime": _format_firestore_date_ist(
+                    d.get("requested_datetime")
+                ),
+                "employee_id": d.get("employee_id") or "",
+                "employee_name": d.get("employee_name") or "",
+                "department": d.get("department") or "",
+                "people_count": d.get("people_count") or "",
+                "visitor_names": ", ".join(names) if names else "",
+                "coming_from": (
+                    d.get("coming_from")
+                    or d.get("coming_from_label")
+                    or d.get("organization")
+                    or ""
+                ),
+                "coming_for": (
+                    d.get("coming_for_label")
+                    or d.get("visit_for_label")
+                    or ""
+                ),
+                "visiting_to": _visitor_visiting_to_label(d),
+                "guest_phone": d.get("guest_phone") or "",
+                "jmd_status": jmd_display,
+                "md_status": md_display,
+                "jmd_route": _request_jmd_route(d),
+                "fully_approved": _visitor_fully_approved(d),
+                "has_visitor_otp": bool(_normalize_visitor_otp(d.get("visitor_otp"))),
+                "security_in_at": _format_firestore_time_ist_12h(in_raw),
+                "security_out_at": _format_firestore_time_ist_12h(out_raw),
+                "gate_per_unit": _visitor_uses_per_unit_gate(d),
+            }
+        )
+    return rows
+
+
+def fetch_security_visitor_requests(
+    ist_day=None,
+    *,
+    jmd_route_filter: str | None = None,
+    security_tab_unit: str = "unit-i",
+):
+    """Load VISITOR requests for one Coming On date (IST calendar day), newest first, cap 200."""
+    db, err = _get_firestore_client()
+    if err:
+        return [], err
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _fetch_security_visitor_requests_inner,
+                ist_day,
+                db,
+                jmd_route_filter=jmd_route_filter,
+                security_tab_unit=security_tab_unit,
+            )
+            return future.result(timeout=25), None
+    except TimeoutError:
+        app.logger.error("Firestore security visitor fetch timed out")
+        return [], (
+            "Firestore request timed out. Check that the Cloud Run service account has "
+            "Cloud Datastore User on whatsapp-approval-system."
+        )
+    except Exception as e:
+        app.logger.exception("Firestore security visitor fetch failed")
+        return [], str(e)
+
+
+def _security_record_visitor_gate(
+    request_id: str,
+    action: str,
+    otp: str,
+    *,
+    security_unit: str = "unit-i",
+):
+    """Visitor gate: IN (OTP required) then OUT. Per-unit times when visiting Both."""
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    action = (action or "").strip().lower()
+    if action not in ("in", "out"):
+        return False, "Invalid action"
+    rid = (request_id or "").strip()
+    if not rid:
+        return False, "Missing request id"
+    try:
+        ref = db.collection("requests").document(rid)
+        snap = ref.get()
+        if not snap.exists:
+            return False, "Request not found"
+        d = snap.to_dict() or {}
+        if (d.get("type") or "").strip().upper() != "VISITOR":
+            return False, "Not a visitor request"
+        if not _visitor_fully_approved(d):
+            return False, "Visitor request is not fully approved yet (MD approval pending)"
+        in_field, out_field = _visitor_gate_field_names(d, security_unit)
+        in_at = d.get(in_field)
+        out_at = d.get(out_field)
+        now = datetime.now(timezone.utc)
+        stored_otp = _normalize_visitor_otp(d.get("visitor_otp"))
+        if action == "in":
+            if in_at is not None:
+                return False, "In time is already recorded for this unit"
+            if not stored_otp:
+                return False, "No entry OTP on this request yet (wait for MD approval)"
+            entered = _normalize_visitor_otp(otp)
+            if not entered:
+                return False, "Entry OTP is required"
+            if entered != stored_otp:
+                return False, "Incorrect OTP"
+            ref.update({in_field: now})
+            return True, None
+        if out_at is not None:
+            return False, "Out time is already recorded for this unit"
+        if in_at is None:
+            return False, "Record IN before OUT for this unit"
+        ref.update({out_field: now})
+        return True, None
+    except Exception as e:
+        app.logger.exception("security visitor gate update failed")
         return False, str(e)
 
 
@@ -3746,9 +4043,24 @@ def documents():
 
 
 SECURITY_TABS = (
-    ("on-duty", "On Duty"),
-    ("vehicle-request", "Vehicle Request"),
+    ("on-duty", "OD Request"),
+    ("visitor-request", "Visitor Request"),
 )
+
+
+def _delete_firestore_request(request_id: str) -> tuple[bool, str | None]:
+    """Permanently remove one document from Firestore ``requests``."""
+    rid = (request_id or "").strip()
+    if not rid:
+        return False, "Missing request id"
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref = db.collection("requests").document(rid)
+    if not ref.get().exists:
+        return False, "Request not found"
+    ref.delete()
+    return True, None
 
 
 @app.route("/security")
@@ -3765,12 +4077,18 @@ def security():
     selected_unit, unit_filter_locked = _security_unit_for_session(request.args.get("unit"))
     jmd_route_filter = _parse_security_unit_filter(selected_unit)
     od_requests = []
+    visitor_requests = []
     firestore_error = None
-    if tab in ("on-duty", "vehicle-request"):
+    if tab == "on-duty":
         od_requests, firestore_error = fetch_security_od_requests(
             ist_day=selected_day,
             jmd_route_filter=jmd_route_filter,
-            company_vehicle_only=(tab == "vehicle-request"),
+        )
+    elif tab == "visitor-request":
+        visitor_requests, firestore_error = fetch_security_visitor_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+            security_tab_unit=selected_unit,
         )
     return render_template(
         "security.html",
@@ -3778,10 +4096,12 @@ def security():
         security_tabs=SECURITY_TABS,
         selected_tab=tab,
         od_requests=od_requests,
+        visitor_requests=visitor_requests,
         firestore_error=firestore_error,
         selected_date_iso=selected_day.strftime("%Y-%m-%d"),
         selected_unit=selected_unit,
         unit_filter_locked=unit_filter_locked,
+        can_delete_requests=_user_is_admin(),
     )
 
 
@@ -3797,6 +4117,43 @@ def security_od_gate():
     ok, err = _security_record_od_gate(request_id, action, odo_reading)
     if not ok:
         return jsonify({"ok": False, "error": err or "Update failed"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/security/api/visitor-gate", methods=["POST"])
+@login_required
+def security_visitor_gate():
+    if not _user_can_access_security():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    request_id = (payload.get("request_id") or "").strip()
+    action = (payload.get("action") or "").strip()
+    otp = payload.get("otp")
+    security_unit = (payload.get("unit") or "unit-i").strip().lower()
+    ok, err = _security_record_visitor_gate(
+        request_id, action, otp, security_unit=security_unit
+    )
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Update failed"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/security/api/delete-request", methods=["POST"])
+@login_required
+def security_delete_request():
+    """Admin only: delete one OD or visitor request from Firestore."""
+    if not _user_is_admin():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    request_id = (payload.get("request_id") or "").strip()
+    ok, err = _delete_firestore_request(request_id)
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Delete failed"}), 400
+    app.logger.info(
+        "security request deleted request_id=%s by=%s",
+        request_id,
+        getattr(current_user, "email", ""),
+    )
     return jsonify({"ok": True})
 
 
