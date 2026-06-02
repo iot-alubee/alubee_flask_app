@@ -133,6 +133,12 @@
 		font-weight: 500;
 		box-shadow: inset 4px 0 0 0 #adb5bd;
 	}
+	.security-od-table tbody td.security-appr-offline {
+		background-color: rgba(108, 117, 125, 0.22) !important;
+		color: #343a40;
+		font-weight: 600;
+		box-shadow: inset 4px 0 0 0 #6c757d;
+	}
 	.security-od-table tbody tr:hover td.security-appr-approved {
 		background-color: rgba(25, 135, 84, 0.28) !important;
 	}
@@ -307,7 +313,7 @@
 								<td class="cell cell-visiting">{{ row.reason|sentence_case }}</td>
 								<td class="cell">{{ row.company_vehicle or '—' }}</td>
 								<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status|sentence_case }}</td>
-								<td class="cell {{ row.md_status|approval_cell_class }}">{{ row.md_status|sentence_case }}</td>
+								<td class="cell {{ row.md_status|approval_cell_class }}">{% if row.md_status == 'Offline' %}Offline{% else %}{{ row.md_status|sentence_case }}{% endif %}</td>
 								<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
 								<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
 								<td class="cell cell-date">{{ row.odo_out or '—' }}</td>
@@ -435,6 +441,54 @@
 							{% else %}
 							<tr>
 								<td colspan="{% if can_delete_requests %}15{% else %}14{% endif %}" class="cell text-center text-muted py-5">No visitor requests for this date.</td>
+							</tr>
+							{% endif %}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+		{% endif %}
+
+		{% if selected_tab == 'approver-status' %}
+		<div class="app-card app-card-settings security-od-card">
+			<div class="app-card-body p-3 security-od-toolbar">
+				<div class="d-flex flex-wrap align-items-end gap-3">
+					<div>
+						<div class="small text-muted">Approver availability used by OD/Visitor approval flow.</div>
+						<div class="small text-muted">Default is Online until someone sends Hi and sets Offline.</div>
+					</div>
+					<div class="d-flex gap-2 align-items-center ms-auto">
+						<a class="btn btn-sm btn-primary px-3" href="{{ url_for('security', tab='approver-status', date=selected_date_iso, unit=selected_unit) }}">Refresh</a>
+					</div>
+				</div>
+			</div>
+			<div class="app-card-body p-0 p-md-0">
+				<div class="table-responsive security-od-scroll">
+					<table class="table table-hover security-od-table mb-0">
+						<thead class="table-light">
+							<tr>
+								<th scope="col">Role</th>
+								<th scope="col">WhatsApp ID</th>
+								<th scope="col">Availability</th>
+								<th scope="col">Saved Role</th>
+								<th scope="col" class="cell-date">Last Updated (IST)</th>
+							</tr>
+						</thead>
+						<tbody>
+							{% if approver_status_rows %}
+							{% for row in approver_status_rows %}
+							<tr>
+								<td class="cell">{{ row.role }}</td>
+								<td class="cell">{{ row.wa_id }}</td>
+								<td class="cell {{ row.status_cell_class }}">{{ row.availability }}</td>
+								<td class="cell">{{ row.saved_role or '—' }}</td>
+								<td class="cell cell-date">{{ row.updated_at or '—' }}</td>
+							</tr>
+							{% endfor %}
+							{% else %}
+							<tr>
+								<td colspan="5" class="cell text-center text-muted py-5">No approver status records found.</td>
 							</tr>
 							{% endif %}
 						</tbody>

@@ -159,6 +159,8 @@ def approval_cell_class(value):
         return "security-appr-pending"
     if s in ("n/a", "na", "none") or s.startswith("n/a"):
         return "security-appr-na"
+    if s == "offline":
+        return "security-appr-offline"
     if (
         "deny" in s
         or "rejected" in s
@@ -847,6 +849,101 @@ def _ist_today_date():
     return datetime.now(_ist_tzinfo()).date()
 
 
+APPROVER_STATUS_COLLECTION = "approver_status"
+
+
+def _wa_id_from_env(*env_keys: str, default_mobile: str = "") -> str:
+    """Resolve whatsapp:+91… from env (same names as Interakt bot)."""
+    for key in env_keys:
+        raw = (os.environ.get(key) or "").strip().strip('"').strip("'")
+        if not raw:
+            continue
+        if raw.lower().startswith("whatsapp:"):
+            return raw.lower()
+        digits = "".join(c for c in raw if c.isdigit())
+        if len(digits) == 10:
+            return f"whatsapp:+91{digits}"
+        if len(digits) >= 12 and digits.startswith("91"):
+            return f"whatsapp:+{digits[-12:]}" if len(digits) > 12 else f"whatsapp:+{digits}"
+    digits = "".join(c for c in (default_mobile or "") if c.isdigit())
+    if len(digits) == 10:
+        return f"whatsapp:+91{digits}"
+    return ""
+
+
+def _md_whatsapp_for_security(db) -> str:
+    return _wa_id_from_env("MD_WHATSAPP_NUMBER", default_mobile="7538866308")
+
+
+def _approver_is_offline(db, wa_id: str) -> bool:
+    """True only when approver_status explicitly set to offline (missing doc = online)."""
+    if not db or not wa_id:
+        return False
+    snap = db.collection(APPROVER_STATUS_COLLECTION).document(
+        wa_id.strip().lower()
+    ).get()
+    if not snap.exists:
+        return False
+    return (snap.to_dict() or {}).get("availability", "").strip().lower() == "offline"
+
+
+def _format_firestore_datetime_ist(val):
+    dtu = _firestore_value_to_utc_datetime(val)
+    if dtu is None:
+        return ""
+    try:
+        return dtu.astimezone(_ist_tzinfo()).strftime("%d-%m-%Y %I:%M %p")
+    except Exception:
+        return ""
+
+
+def _fetch_security_approver_status(db):
+    """JMD/MD availability from Firestore ``approver_status`` (default online)."""
+    approvers = [
+        ("JMD I", _wa_id_from_env("JMD_I_WHATSAPP_NUMBER", "JMD_WHATSAPP_NUMBER")),
+        ("JMD II", _wa_id_from_env("JMD_II_WHATSAPP_NUMBER")),
+        ("MD", _wa_id_from_env("MD_WHATSAPP_NUMBER", default_mobile="7538866308")),
+        ("TEST MD", _wa_id_from_env("TEST_MD_WHATSAPP_NUMBER")),
+    ]
+    rows = []
+    for role, wa_id in approvers:
+        if not wa_id:
+            continue
+        snap = db.collection(APPROVER_STATUS_COLLECTION).document(wa_id.lower()).get()
+        data = snap.to_dict() if snap.exists else {}
+        availability = (data.get("availability") or "online").strip().lower()
+        if availability != "offline":
+            availability = "online"
+        rows.append({
+            "role": role,
+            "wa_id": wa_id,
+            "availability": availability.title(),
+            "status_cell_class": "security-appr-na"
+            if availability == "online"
+            else "security-appr-offline",
+            "updated_at": _format_firestore_datetime_ist(data.get("updated_at")),
+            "saved_role": (data.get("role") or "").strip(),
+        })
+    return rows
+
+
+def _jmd_approved_for_od(d: dict) -> bool:
+    jmd_u = (d.get("jmd_status") or "").strip().upper()
+    return jmd_u == "APPROVED"
+
+
+def _od_security_fully_approved(d: dict, md_offline: bool) -> bool:
+    """Security OUT/IN: MD approved, or MD offline and JMD already approved."""
+    md_u = (d.get("md_status") or "").strip().upper()
+    if md_u == "APPROVED":
+        return True
+    if md_u == "DENIED" or (d.get("jmd_status") or "").strip().upper() == "DENIED":
+        return False
+    if md_offline and _jmd_approved_for_od(d):
+        return True
+    return False
+
+
 def _firestore_value_to_utc_datetime(val):
     """Normalize Firestore / datetime values to timezone-aware UTC."""
     if val is None:
@@ -1087,22 +1184,30 @@ def _get_firestore_client():
         return None, str(e)
 
 
-def _od_approval_statuses_for_display(d: dict) -> tuple[str, str]:
+def _od_approval_statuses_for_display(
+    d: dict, *, md_offline: bool = False
+) -> tuple[str, str]:
     """JMD/MD labels for security dashboard (fixes legacy MD-deny overwriting jmd_status)."""
     if d.get("visitor_dual_jmd"):
         jmd_raw = _aggregate_dual_jmd_status(d)
         md_raw = (d.get("md_status") or "").strip()
-        return _format_approval_label(jmd_raw), _format_approval_label(md_raw)
-    jmd_raw = (d.get("jmd_status") or "").strip()
-    md_raw = (d.get("md_status") or "").strip()
-    jmd_u = jmd_raw.upper()
-    md_u = md_raw.upper()
-    # MD can only deny after JMD approved; old bot wrote jmd_status=DENIED on MD deny
-    if md_u == "DENIED" and jmd_u == "DENIED":
-        return _format_approval_label("APPROVED"), _format_approval_label(
-            md_raw or "DENIED"
-        )
-    return _format_approval_label(jmd_raw), _format_approval_label(md_raw)
+        jmd_display = _format_approval_label(jmd_raw)
+        md_display = _format_approval_label(md_raw)
+    else:
+        jmd_raw = (d.get("jmd_status") or "").strip()
+        md_raw = (d.get("md_status") or "").strip()
+        jmd_u = jmd_raw.upper()
+        md_u = md_raw.upper()
+        # MD can only deny after JMD approved; old bot wrote jmd_status=DENIED on MD deny
+        if md_u == "DENIED" and jmd_u == "DENIED":
+            jmd_display = _format_approval_label("APPROVED")
+            md_display = _format_approval_label(md_raw or "DENIED")
+        else:
+            jmd_display = _format_approval_label(jmd_raw)
+            md_display = _format_approval_label(md_raw)
+    if md_offline and md_display not in ("Approved", "Denied"):
+        md_display = "Offline"
+    return jmd_display, md_display
 
 
 def _fetch_security_od_requests_inner(
@@ -1128,17 +1233,20 @@ def _fetch_security_od_requests_inner(
         buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
     buf.sort(key=lambda x: x[0], reverse=True)
     buf = buf[:200]
+    md_wa = _md_whatsapp_for_security(db)
+    md_offline = _approver_is_offline(db, md_wa)
     rows = []
     for _, d, snap_id in buf:
-        md_ok = (d.get("md_status") or "").strip().upper() == "APPROVED"
-        fully_ok = md_ok
+        fully_ok = _od_security_fully_approved(d, md_offline)
         distance_km = d.get("distance_km")
         if distance_km is None and d.get("odo_out") is not None and d.get("odo_in") is not None:
             try:
                 distance_km = round(float(d["odo_in"]) - float(d["odo_out"]), 2)
             except (TypeError, ValueError):
                 distance_km = None
-        jmd_display, md_display = _od_approval_statuses_for_display(d)
+        jmd_display, md_display = _od_approval_statuses_for_display(
+            d, md_offline=md_offline
+        )
         rows.append(
             {
                 "request_id": d.get("request_id") or snap_id,
@@ -1281,9 +1389,10 @@ def _security_record_od_gate(request_id: str, action: str, odo_reading):
         d = snap.to_dict() or {}
         if (d.get("type") or "").strip().upper() != "OD":
             return False, "Not an OD request"
-        md_ok = (d.get("md_status") or "").strip().upper() == "APPROVED"
-        if not md_ok:
-            return False, "OD is not fully approved yet (MD approval pending)"
+        md_wa = _md_whatsapp_for_security(db)
+        md_offline = _approver_is_offline(db, md_wa)
+        if not _od_security_fully_approved(d, md_offline):
+            return False, "OD is not fully approved yet (JMD/MD approval pending)"
         needs_odo = _request_uses_company_vehicle(d)
         odo = None
         if needs_odo:
@@ -4045,6 +4154,7 @@ def documents():
 SECURITY_TABS = (
     ("on-duty", "OD Request"),
     ("visitor-request", "Visitor Request"),
+    ("approver-status", "Approver Status"),
 )
 
 
@@ -4078,6 +4188,7 @@ def security():
     jmd_route_filter = _parse_security_unit_filter(selected_unit)
     od_requests = []
     visitor_requests = []
+    approver_status_rows = []
     firestore_error = None
     if tab == "on-duty":
         od_requests, firestore_error = fetch_security_od_requests(
@@ -4090,6 +4201,16 @@ def security():
             jmd_route_filter=jmd_route_filter,
             security_tab_unit=selected_unit,
         )
+    elif tab == "approver-status":
+        db, err = _get_firestore_client()
+        if err:
+            firestore_error = err
+        else:
+            try:
+                approver_status_rows = _fetch_security_approver_status(db)
+            except Exception as e:
+                app.logger.exception("Firestore approver status fetch failed")
+                firestore_error = str(e)
     return render_template(
         "security.html",
         active_nav="security",
@@ -4097,6 +4218,7 @@ def security():
         selected_tab=tab,
         od_requests=od_requests,
         visitor_requests=visitor_requests,
+        approver_status_rows=approver_status_rows,
         firestore_error=firestore_error,
         selected_date_iso=selected_day.strftime("%Y-%m-%d"),
         selected_unit=selected_unit,
