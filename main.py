@@ -872,7 +872,7 @@ def _wa_id_from_env(*env_keys: str, default_mobile: str = "") -> str:
 
 
 def _md_whatsapp_for_security(db) -> str:
-    return _wa_id_from_env("MD_WHATSAPP_NUMBER", default_mobile="7538866308")
+    return _wa_id_from_env("MD_WHATSAPP_NUMBER")
 
 
 def _approver_is_offline(db, wa_id: str) -> bool:
@@ -902,7 +902,7 @@ def _fetch_security_approver_status(db):
     approvers = [
         ("JMD I", _wa_id_from_env("JMD_I_WHATSAPP_NUMBER", "JMD_WHATSAPP_NUMBER")),
         ("JMD II", _wa_id_from_env("JMD_II_WHATSAPP_NUMBER")),
-        ("MD", _wa_id_from_env("MD_WHATSAPP_NUMBER", default_mobile="7538866308")),
+        ("MD", _wa_id_from_env("MD_WHATSAPP_NUMBER")),
         ("TEST MD", _wa_id_from_env("TEST_MD_WHATSAPP_NUMBER")),
     ]
     rows = []
