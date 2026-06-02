@@ -908,6 +908,14 @@ def _fetch_security_approver_status(db):
     rows = []
     for role, wa_id in approvers:
         if not wa_id:
+            rows.append({
+                "role": role,
+                "wa_id": "Not configured",
+                "availability": "Not configured",
+                "status_cell_class": "security-appr-pending",
+                "updated_at": "",
+                "saved_role": "",
+            })
             continue
         snap = db.collection(APPROVER_STATUS_COLLECTION).document(wa_id.lower()).get()
         data = snap.to_dict() if snap.exists else {}
