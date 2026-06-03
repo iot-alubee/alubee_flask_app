@@ -13,10 +13,11 @@ So: **no users table in BigQuery**. Keep BigQuery for business data; keep auth i
 
 - **Flask-Login** handles sessions and “remember me”.
 - **SQLite** stores the `users` table (id, email, password_hash, created_at).
-- **First run** creates a default user you can use to log in:
-  - Email: `admin@alubee.com`
-  - Password: `admin123`  
-  Change this password (or add a proper “change password” flow) before going to production.
+- **First run** creates default users you can use to log in:
+  - `admin@alubee.com` / `admin123` (admin — full access)
+  - `security.1@alubee.com` / `security@alubee` (viewer — **Security tab only**, Unit I locked)
+  - `security.2@alubee.com` / `security@alubee` (viewer — **Security tab only**, Unit II locked)  
+  Change these passwords before going to production.
 
 ## Production checklist
 

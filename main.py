@@ -69,22 +69,56 @@ login_manager.login_view = "login"
 login_manager.login_message = "Please log in to access this page."
 
 
+SECURITY_UNIT_I_EMAIL = "security.1@alubee.com"
+SECURITY_UNIT_II_EMAIL = "security.2@alubee.com"
+
+# Built-in accounts (SQLite). Change passwords after deploy in production.
+_DEFAULT_ADMIN = ("admin@alubee.com", "admin123")
+_DEFAULT_SECURITY_USERS = (
+    (SECURITY_UNIT_I_EMAIL, "security@alubee"),
+    (SECURITY_UNIT_II_EMAIL, "security@alubee"),
+)
+_SECURITY_VIEWER_PAGES = ("security",)
+
+
+def _ensure_builtin_security_user(email: str, password: str) -> None:
+    """Security gate logins: viewer role, Security tab only (not admin)."""
+    email = email.strip().lower()
+    existing = auth.get_user_by_email(email)
+    if existing is None:
+        user_id = auth.create_user(email, password, "viewer")
+        if user_id:
+            auth.set_viewer_pages(user_id, list(_SECURITY_VIEWER_PAGES))
+        return
+    conn = auth.get_db()
+    conn.execute(
+        "UPDATE users SET role = 'viewer' WHERE email = ?",
+        (email,),
+    )
+    conn.commit()
+    conn.close()
+    auth.set_viewer_pages(existing["id"], list(_SECURITY_VIEWER_PAGES))
+
+
 def _ensure_auth_database():
-    """Create SQLite auth tables and default admin. Runs on import so Gunicorn/Cloud Run work
+    """Create SQLite auth tables and default users. Runs on import so Gunicorn/Cloud Run work
     (the ``if __name__ == '__main__'`` block is never executed under gunicorn)."""
     try:
         auth.init_db()
-        existing = auth.get_user_by_email("admin@alubee.com")
+        admin_email, admin_password = _DEFAULT_ADMIN
+        existing = auth.get_user_by_email(admin_email)
         if existing is None:
-            auth.create_user("admin@alubee.com", "admin123", "admin")
+            auth.create_user(admin_email, admin_password, "admin")
         else:
             conn = auth.get_db()
             conn.execute(
                 "UPDATE users SET role = 'admin' WHERE email = ?",
-                ("admin@alubee.com",),
+                (admin_email,),
             )
             conn.commit()
             conn.close()
+        for email, password in _DEFAULT_SECURITY_USERS:
+            _ensure_builtin_security_user(email, password)
     except Exception as e:
         app.logger.exception("Auth database initialization failed: %s", e)
 
@@ -676,6 +710,18 @@ def load_user(user_id):
     return User.get(user_id)
 
 
+def _login_landing_url(user: User) -> str:
+    """Where to send the user after login (security-only → Security page)."""
+    email = (user.email or "").strip().lower()
+    if email in (SECURITY_UNIT_I_EMAIL, SECURITY_UNIT_II_EMAIL):
+        return url_for("security")
+    if (user.role or "").strip().lower() == "viewer":
+        pages = list(user.allowed_pages or [])
+        if pages == ["security"] or set(pages) == {"security"}:
+            return url_for("security")
+    return url_for("index")
+
+
 def _user_has_ppc_access():
     """Same rule as Department / PPC menu: admin, editor, or viewer with 'ppc' page."""
     if not current_user.is_authenticated:
@@ -1003,10 +1049,6 @@ def _visitor_coming_on_date(d: dict):
 
 def _visitor_coming_on_label(d: dict) -> str:
     return (d.get("coming_on_date") or d.get("visit_date") or "").strip() or "—"
-
-
-SECURITY_UNIT_I_EMAIL = "security.1@alubee.com"
-SECURITY_UNIT_II_EMAIL = "security.2@alubee.com"
 
 
 def _parse_security_unit_filter(unit: str) -> str | None:
@@ -1445,8 +1487,39 @@ def _security_record_od_gate(request_id: str, action: str, odo_reading):
         return False, str(e)
 
 
-def _visitor_fully_approved(d: dict) -> bool:
-    return (d.get("md_status") or "").strip().upper() == "APPROVED"
+def _jmd_approved_for_visitor(d: dict) -> bool:
+    if d.get("visitor_dual_jmd"):
+        return _aggregate_dual_jmd_status(d).strip().upper() == "APPROVED"
+    return _jmd_approved_for_od(d)
+
+
+def _visitor_security_fully_approved(d: dict, md_offline: bool) -> bool:
+    """Security IN: MD approved, or MD offline with JMD done and entry OTP issued."""
+    md_u = (d.get("md_status") or "").strip().upper()
+    if md_u == "APPROVED":
+        return True
+    if md_u == "DENIED":
+        return False
+    if d.get("visitor_dual_jmd"):
+        if _aggregate_dual_jmd_status(d).strip().upper() == "DENIED":
+            return False
+    elif (d.get("jmd_status") or "").strip().upper() == "DENIED":
+        return False
+    if md_offline and _jmd_approved_for_visitor(d):
+        return bool(_normalize_visitor_otp(d.get("visitor_otp")))
+    return False
+
+
+def _backfill_visitor_otp_if_md_offline(ref, d: dict, *, md_offline: bool) -> dict:
+    """Stuck requests: JMD approved before bot fix — issue OTP in Firestore for security IN."""
+    if not md_offline or not _jmd_approved_for_visitor(d):
+        return d
+    if _normalize_visitor_otp(d.get("visitor_otp")):
+        return d
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    ref.update({"visitor_otp": otp, "guest_otp_sent": False})
+    snap = ref.get()
+    return snap.to_dict() if snap.exists else d
 
 
 def _normalize_visitor_otp(value) -> str:
@@ -1481,13 +1554,20 @@ def _fetch_security_visitor_requests_inner(
         buf.append((sort_day, _firestore_ts_to_sort_key(ts), d, snap.id))
     buf.sort(key=lambda x: (x[0], x[1]), reverse=True)
     buf = buf[:200]
+    md_wa = _md_whatsapp_for_security(db)
+    md_offline = _approver_is_offline(db, md_wa) if md_wa else False
     rows = []
     for _, _, d, snap_id in buf:
+        ref = db.collection("requests").document(snap_id)
+        d = _backfill_visitor_otp_if_md_offline(ref, d, md_offline=md_offline)
         names = d.get("visitor_names") or []
         if isinstance(names, str):
             names = [n.strip() for n in names.split(",") if n.strip()]
-        jmd_display, md_display = _od_approval_statuses_for_display(d)
+        jmd_display, md_display = _od_approval_statuses_for_display(
+            d, md_offline=md_offline
+        )
         in_raw, out_raw = _visitor_gate_timestamps(d, security_tab_unit)
+        fully_ok = _visitor_security_fully_approved(d, md_offline)
         rows.append(
             {
                 "request_id": d.get("request_id") or snap_id,
@@ -1516,7 +1596,7 @@ def _fetch_security_visitor_requests_inner(
                 "jmd_status": jmd_display,
                 "md_status": md_display,
                 "jmd_route": _request_jmd_route(d),
-                "fully_approved": _visitor_fully_approved(d),
+                "fully_approved": fully_ok,
                 "has_visitor_otp": bool(_normalize_visitor_otp(d.get("visitor_otp"))),
                 "security_in_at": _format_firestore_time_ist_12h(in_raw),
                 "security_out_at": _format_firestore_time_ist_12h(out_raw),
@@ -1582,7 +1662,10 @@ def _security_record_visitor_gate(
         d = snap.to_dict() or {}
         if (d.get("type") or "").strip().upper() != "VISITOR":
             return False, "Not a visitor request"
-        if not _visitor_fully_approved(d):
+        md_wa = _md_whatsapp_for_security(db)
+        md_offline = _approver_is_offline(db, md_wa) if md_wa else False
+        d = _backfill_visitor_otp_if_md_offline(ref, d, md_offline=md_offline)
+        if not _visitor_security_fully_approved(d, md_offline):
             return False, "Visitor request is not fully approved yet (MD approval pending)"
         in_field, out_field = _visitor_gate_field_names(d, security_unit)
         in_at = d.get(in_field)
@@ -4184,8 +4267,7 @@ def _delete_firestore_request(request_id: str) -> tuple[bool, str | None]:
 @app.route("/security")
 @login_required
 def security():
-    if not _user_can_access_security():
-        abort(403)
+    require_page("security")
     tab = (request.args.get("tab") or "on-duty").strip().lower()
     allowed_tabs = {k for k, _ in SECURITY_TABS}
     if tab not in allowed_tabs:
@@ -4297,7 +4379,7 @@ def help():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for("index"))
+        return redirect(_login_landing_url(current_user))
     if request.method == "POST":
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
@@ -4317,7 +4399,9 @@ def login():
             allowed_pages=allowed,
         )
         login_user(user, remember=bool(request.form.get("remember")))
-        next_url = request.args.get("next") or url_for("index")
+        next_url = request.args.get("next")
+        if not next_url or not str(next_url).startswith("/"):
+            next_url = _login_landing_url(user)
         return redirect(next_url)
     return render_template("login.html")
 
