@@ -986,16 +986,61 @@ def _jmd_approved_for_od(d: dict) -> bool:
     return jmd_u == "APPROVED"
 
 
-def _od_security_fully_approved(d: dict, md_offline: bool) -> bool:
-    """Security OUT/IN: MD approved, or MD offline and JMD already approved."""
-    md_u = (d.get("md_status") or "").strip().upper()
-    if md_u == "APPROVED":
+def _md_offline_bypass_on_request(d: dict) -> bool:
+    """Persisted when JMD approved while MD was offline — stays even when MD is back online."""
+    if d.get("md_offline_bypass"):
         return True
-    if md_u == "DENIED" or (d.get("jmd_status") or "").strip().upper() == "DENIED":
+    return (d.get("md_status") or "").strip().upper() == "OFFLINE"
+
+
+def _legacy_md_offline_bypass_candidate(d: dict) -> bool:
+    """Older requests: JMD done, MD still PENDING, but already treated as approved offline."""
+    if _md_offline_bypass_on_request(d):
         return False
-    if md_offline and _jmd_approved_for_od(d):
+    md_u = (d.get("md_status") or "").strip().upper()
+    if md_u != "PENDING" or not _jmd_approved_for_od(d):
+        return False
+    req_type = (d.get("type") or "").strip().upper()
+    if req_type == "VISITOR":
+        return bool(_normalize_visitor_otp(d.get("visitor_otp")))
+    if req_type == "OD":
+        return bool(d.get("security_out_at") or d.get("odo_out") is not None)
+    return False
+
+
+def _maybe_persist_legacy_md_offline_bypass(ref, d: dict) -> dict:
+    if not _legacy_md_offline_bypass_candidate(d):
+        return d
+    ref.update({"md_status": "OFFLINE", "md_offline_bypass": True})
+    snap = ref.get()
+    return snap.to_dict() if snap.exists else d
+
+
+def _md_step_satisfied_for_security(
+    d: dict, *, md_offline_live: bool, for_visitor: bool
+) -> bool:
+    md_u = (d.get("md_status") or "").strip().upper()
+    if md_u == "DENIED":
+        return False
+    if _md_offline_bypass_on_request(d) or md_u == "APPROVED":
+        return True
+    jmd_ok = _jmd_approved_for_visitor(d) if for_visitor else _jmd_approved_for_od(d)
+    if not jmd_ok:
+        return False
+    if md_offline_live or _legacy_md_offline_bypass_candidate(d):
         return True
     return False
+
+
+def _od_security_fully_approved(d: dict, md_offline: bool) -> bool:
+    """Security OUT/IN: MD approved/offline-bypass and JMD approved."""
+    if (d.get("jmd_status") or "").strip().upper() == "DENIED":
+        return False
+    if not _jmd_approved_for_od(d):
+        return False
+    return _md_step_satisfied_for_security(
+        d, md_offline_live=md_offline, for_visitor=False
+    )
 
 
 def _firestore_value_to_utc_datetime(val):
@@ -1105,6 +1150,8 @@ def _format_approval_label(status: str) -> str:
         return "Approved"
     if s == "DENIED":
         return "Denied"
+    if s == "OFFLINE":
+        return "Offline"
     if s in ("PENDING", "AWAITING_JMD", "AWAITING_MANAGER"):
         return "Pending"
     if s in ("N/A", "NA", ""):
@@ -1255,7 +1302,9 @@ def _od_approval_statuses_for_display(
         else:
             jmd_display = _format_approval_label(jmd_raw)
             md_display = _format_approval_label(md_raw)
-    if md_offline and md_display not in ("Approved", "Denied"):
+    if _md_offline_bypass_on_request(d) or _legacy_md_offline_bypass_candidate(d):
+        md_display = "Offline"
+    elif md_offline and md_display not in ("Approved", "Denied"):
         md_display = "Offline"
     return jmd_display, md_display
 
@@ -1287,6 +1336,8 @@ def _fetch_security_od_requests_inner(
     md_offline = _approver_is_offline(db, md_wa)
     rows = []
     for _, d, snap_id in buf:
+        ref = db.collection("requests").document(snap_id)
+        d = _maybe_persist_legacy_md_offline_bypass(ref, d)
         fully_ok = _od_security_fully_approved(d, md_offline)
         distance_km = d.get("distance_km")
         if distance_km is None and d.get("odo_out") is not None and d.get("odo_in") is not None:
@@ -1494,32 +1545,44 @@ def _jmd_approved_for_visitor(d: dict) -> bool:
 
 
 def _visitor_security_fully_approved(d: dict, md_offline: bool) -> bool:
-    """Security IN: MD approved, or MD offline with JMD done and entry OTP issued."""
-    md_u = (d.get("md_status") or "").strip().upper()
-    if md_u == "APPROVED":
-        return True
-    if md_u == "DENIED":
-        return False
+    """Security IN: MD step complete (incl. offline bypass) and entry OTP present."""
     if d.get("visitor_dual_jmd"):
         if _aggregate_dual_jmd_status(d).strip().upper() == "DENIED":
             return False
     elif (d.get("jmd_status") or "").strip().upper() == "DENIED":
         return False
-    if md_offline and _jmd_approved_for_visitor(d):
-        return bool(_normalize_visitor_otp(d.get("visitor_otp")))
-    return False
+    if (d.get("md_status") or "").strip().upper() == "DENIED":
+        return False
+    if not _jmd_approved_for_visitor(d):
+        return False
+    if not _md_step_satisfied_for_security(
+        d, md_offline_live=md_offline, for_visitor=True
+    ):
+        return False
+    return bool(_normalize_visitor_otp(d.get("visitor_otp")))
 
 
 def _backfill_visitor_otp_if_md_offline(ref, d: dict, *, md_offline: bool) -> dict:
-    """Stuck requests: JMD approved before bot fix — issue OTP in Firestore for security IN."""
-    if not md_offline or not _jmd_approved_for_visitor(d):
+    """Legacy rows: create OTP and persist OFFLINE md_status when JMD approved under MD offline."""
+    needs_bypass = _legacy_md_offline_bypass_candidate(d) or (
+        md_offline
+        and _jmd_approved_for_visitor(d)
+        and not _md_offline_bypass_on_request(d)
+    )
+    if not needs_bypass:
         return d
-    if _normalize_visitor_otp(d.get("visitor_otp")):
-        return d
-    otp = f"{secrets.randbelow(1_000_000):06d}"
-    ref.update({"visitor_otp": otp, "guest_otp_sent": False})
-    snap = ref.get()
-    return snap.to_dict() if snap.exists else d
+    patch = {}
+    if not _normalize_visitor_otp(d.get("visitor_otp")):
+        patch["visitor_otp"] = f"{secrets.randbelow(1_000_000):06d}"
+        patch["guest_otp_sent"] = False
+    if (d.get("md_status") or "").strip().upper() == "PENDING":
+        patch["md_status"] = "OFFLINE"
+        patch["md_offline_bypass"] = True
+    if patch:
+        ref.update(patch)
+        snap = ref.get()
+        return snap.to_dict() if snap.exists else d
+    return d
 
 
 def _normalize_visitor_otp(value) -> str:
@@ -1560,6 +1623,7 @@ def _fetch_security_visitor_requests_inner(
     for _, _, d, snap_id in buf:
         ref = db.collection("requests").document(snap_id)
         d = _backfill_visitor_otp_if_md_offline(ref, d, md_offline=md_offline)
+        d = _maybe_persist_legacy_md_offline_bypass(ref, d)
         names = d.get("visitor_names") or []
         if isinstance(names, str):
             names = [n.strip() for n in names.split(",") if n.strip()]
