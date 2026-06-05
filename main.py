@@ -1896,6 +1896,98 @@ def fetch_security_leave_requests(
         return [], _firestore_user_message(e)
 
 
+def _permission_snapshots_for_ist_day(db, ist_day, *, limit: int = 200):
+    """PERMISSION rows for one IST calendar day (permission_date DD-MM-YYYY)."""
+    if ist_day is None:
+        return _security_requests_by_type(db, "PERMISSION", limit=limit)
+    date_str = ist_day.strftime("%d-%m-%Y")
+    coll = db.collection("requests")
+    try:
+        q = (
+            coll.where("type", "==", "PERMISSION")
+            .where("permission_date", "==", date_str)
+            .limit(limit)
+        )
+        return list(q.stream())
+    except Exception as e:
+        app.logger.warning(
+            "Firestore permission date query failed, using type filter: %s", e
+        )
+    snaps = _security_requests_by_type(db, "PERMISSION", limit=limit * 2)
+    out = []
+    for snap in snaps:
+        d = snap.to_dict() or {}
+        if (d.get("permission_date") or "").strip() == date_str:
+            out.append(snap)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _fetch_security_permission_requests_inner(
+    ist_day,
+    db,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    buf = []
+    for snap in _permission_snapshots_for_ist_day(db, ist_day, limit=400):
+        d = snap.to_dict() or {}
+        if jmd_route_filter and _request_jmd_route(d) != jmd_route_filter:
+            continue
+        ts = d.get("requested_datetime")
+        buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
+
+    buf.sort(key=lambda x: x[0], reverse=True)
+    buf = buf[:200]
+
+    rows = []
+    for _, d, _snap_id in buf:
+        rows.append(
+            {
+                "requested_datetime": _format_firestore_date_ist(
+                    d.get("requested_datetime")
+                ),
+                "employee_id": d.get("employee_id") or "",
+                "employee_name": d.get("employee_name") or "",
+                "department": d.get("department") or "",
+                "reason": d.get("reason") or "",
+                "permission_date": d.get("permission_date") or "",
+                "jmd_status": _leave_jmd_display_label(d),
+            }
+        )
+    return rows
+
+
+def fetch_security_permission_requests(
+    ist_day=None,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    """Load PERMISSION requests for one IST calendar day, newest first, cap 200."""
+    db, err = _get_firestore_client()
+    if err:
+        return [], err
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _fetch_security_permission_requests_inner,
+                ist_day,
+                db,
+                jmd_route_filter=jmd_route_filter,
+            )
+            return future.result(timeout=25), None
+    except TimeoutError:
+        app.logger.error("Firestore security permission fetch timed out")
+        return [], (
+            "Firestore request timed out. Check that the Cloud Run service account has "
+            "Cloud Datastore User on whatsapp-approval-system."
+        )
+    except Exception as e:
+        app.logger.exception("Firestore security permission fetch failed")
+        return [], _firestore_user_message(e)
+
+
 def fetch_security_visitor_requests(
     ist_day=None,
     *,
@@ -4536,6 +4628,7 @@ SECURITY_TABS = (
     ("on-duty", "OD Request"),
     ("visitor-request", "Visitor Request"),
     ("leave-request", "Leave Request"),
+    ("permission-request", "Permission Request"),
     ("approver-status", "Approver Status"),
 )
 
@@ -4570,6 +4663,7 @@ def security():
     od_requests = []
     visitor_requests = []
     leave_requests = []
+    permission_requests = []
     approver_status_rows = []
     firestore_error = None
     if tab == "on-duty":
@@ -4585,6 +4679,11 @@ def security():
         )
     elif tab == "leave-request":
         leave_requests, firestore_error = fetch_security_leave_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+        )
+    elif tab == "permission-request":
+        permission_requests, firestore_error = fetch_security_permission_requests(
             ist_day=selected_day,
             jmd_route_filter=jmd_route_filter,
         )
@@ -4606,6 +4705,7 @@ def security():
         od_requests=od_requests,
         visitor_requests=visitor_requests,
         leave_requests=leave_requests,
+        permission_requests=permission_requests,
         approver_status_rows=approver_status_rows,
         firestore_error=firestore_error,
         selected_date_iso=selected_day.strftime("%Y-%m-%d"),
