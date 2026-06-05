@@ -195,6 +195,8 @@ def approval_cell_class(value):
         return "security-appr-na"
     if s == "offline":
         return "security-appr-offline"
+    if "cancel" in s:
+        return "security-appr-na"
     if (
         "deny" in s
         or "rejected" in s
@@ -1225,6 +1227,8 @@ def _format_approval_label(status: str) -> str:
         return "Approved"
     if s == "DENIED":
         return "Denied"
+    if s == "CANCELLED":
+        return "Cancelled"
     if s == "OFFLINE":
         return "Offline"
     if s in ("PENDING", "AWAITING_JMD", "AWAITING_MANAGER"):
@@ -1786,6 +1790,14 @@ def _leave_overlaps_ist_day(d: dict, ist_day) -> bool:
     return False
 
 
+def _leave_jmd_display_label(d: dict) -> str:
+    """JMD column for Security leave tab (employee cancel vs JMD deny)."""
+    if d.get("cancelled_by_employee"):
+        return "Cancelled"
+    raw = (d.get("jmd_status") or "").strip()
+    return _format_approval_label(raw)
+
+
 def _leave_snapshots_for_ist_day(db, ist_day, *, limit: int = 200):
     """LEAVE rows for one IST calendar day (leave_dates array_contains)."""
     if ist_day is None:
@@ -1849,9 +1861,7 @@ def _fetch_security_leave_requests_inner(
                 "leave_from_date": d.get("leave_from_date") or "",
                 "leave_to_date": d.get("leave_to_date") or "",
                 "leave_days": leave_days if leave_days is not None else "",
-                "jmd_status": _format_approval_label(
-                    (d.get("jmd_status") or "").strip()
-                ),
+                "jmd_status": _leave_jmd_display_label(d),
             }
         )
     return rows
