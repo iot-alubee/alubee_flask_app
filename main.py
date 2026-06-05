@@ -896,6 +896,71 @@ def _ist_today_date():
 
 
 APPROVER_STATUS_COLLECTION = "approver_status"
+# Cap Firestore reads per security tab load (avoids full-collection scan → 429 quota).
+_SECURITY_REQUESTS_QUERY_LIMIT = 400
+_LEGACY_MD_BYPASS_WRITES_PER_LOAD = 25
+
+
+def _firestore_user_message(exc: Exception) -> str:
+    msg = str(exc)
+    low = msg.lower()
+    if "429" in msg or "quota" in low or "resource exhausted" in low:
+        return (
+            "Firestore read quota exceeded. Wait about one minute, then click Refresh once. "
+            "Avoid rapid Refresh on OD Request / Visitor Request tabs."
+        )
+    return msg
+
+
+def _security_requests_snapshots(db, req_type: str, *, limit: int | None = None):
+    """Load recent requests of one type (not the entire collection)."""
+    cap = limit or _SECURITY_REQUESTS_QUERY_LIMIT
+    coll = db.collection("requests")
+    try:
+        q = (
+            coll.where("type", "==", req_type)
+            .order_by("requested_datetime", direction=firestore.Query.DESCENDING)
+            .limit(cap)
+        )
+        return list(q.stream())
+    except Exception as e:
+        app.logger.warning("Firestore ordered query failed (%s): %s", req_type, e)
+        return list(coll.where("type", "==", req_type).limit(cap).stream())
+
+
+def _security_requests_by_type(db, req_type: str, *, limit: int | None = None):
+    """Load requests of one type without order_by (no composite index required)."""
+    cap = limit or _SECURITY_REQUESTS_QUERY_LIMIT
+    return list(
+        db.collection("requests").where("type", "==", req_type).limit(cap).stream()
+    )
+
+
+def _visitor_snapshots_for_ist_day(db, ist_day, *, limit: int = 200):
+    """Visitor rows for one Coming On date (IST)."""
+    date_str = ist_day.strftime("%d-%m-%Y")
+    coll = db.collection("requests")
+    try:
+        q = (
+            coll.where("type", "==", "VISITOR")
+            .where("coming_on_date", "==", date_str)
+            .limit(limit)
+        )
+        return list(q.stream())
+    except Exception as e:
+        app.logger.warning(
+            "Firestore visitor date query failed, using type filter: %s", e
+        )
+    snaps = _security_requests_snapshots(db, "VISITOR", limit=limit * 2)
+    out = []
+    for snap in snaps:
+        d = snap.to_dict() or {}
+        visit_day = _visitor_coming_on_date(d)
+        if visit_day is not None and visit_day == ist_day:
+            out.append(snap)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _wa_id_from_env(*env_keys: str, default_mobile: str = "") -> str:
@@ -945,6 +1010,9 @@ def _format_firestore_datetime_ist(val):
 
 def _fetch_security_approver_status(db):
     """JMD/MD availability from Firestore ``approver_status`` (default online)."""
+    cached = _cache_get("security_approver_status")
+    if cached is not None:
+        return cached
     approvers = [
         ("JMD I", _wa_id_from_env("JMD_I_WHATSAPP_NUMBER", "JMD_WHATSAPP_NUMBER")),
         ("JMD II", _wa_id_from_env("JMD_II_WHATSAPP_NUMBER")),
@@ -978,6 +1046,7 @@ def _fetch_security_approver_status(db):
             "updated_at": _format_firestore_datetime_ist(data.get("updated_at")),
             "saved_role": (data.get("role") or "").strip(),
         })
+    _cache_set("security_approver_status", rows)
     return rows
 
 
@@ -1008,9 +1077,15 @@ def _legacy_md_offline_bypass_candidate(d: dict) -> bool:
     return False
 
 
-def _maybe_persist_legacy_md_offline_bypass(ref, d: dict) -> dict:
+def _maybe_persist_legacy_md_offline_bypass(
+    ref, d: dict, *, writes_left: list[int] | None = None
+) -> dict:
     if not _legacy_md_offline_bypass_candidate(d):
         return d
+    if writes_left is not None:
+        if writes_left[0] <= 0:
+            return d
+        writes_left[0] -= 1
     ref.update({"md_status": "OFFLINE", "md_offline_bypass": True})
     snap = ref.get()
     return snap.to_dict() if snap.exists else d
@@ -1317,10 +1392,9 @@ def _fetch_security_od_requests_inner(
     company_vehicle_only: bool = False,
 ):
     buf = []
-    for snap in db.collection("requests").stream():
+    legacy_writes = [_LEGACY_MD_BYPASS_WRITES_PER_LOAD]
+    for snap in _security_requests_snapshots(db, "OD"):
         d = snap.to_dict() or {}
-        if (d.get("type") or "").strip().upper() != "OD":
-            continue
         ts = d.get("requested_datetime")
         if ist_day is not None:
             if _requested_datetime_ist_date(ts) != ist_day:
@@ -1337,7 +1411,9 @@ def _fetch_security_od_requests_inner(
     rows = []
     for _, d, snap_id in buf:
         ref = db.collection("requests").document(snap_id)
-        d = _maybe_persist_legacy_md_offline_bypass(ref, d)
+        d = _maybe_persist_legacy_md_offline_bypass(
+            ref, d, writes_left=legacy_writes
+        )
         fully_ok = _od_security_fully_approved(d, md_offline)
         distance_km = d.get("distance_km")
         if distance_km is None and d.get("odo_out") is not None and d.get("odo_in") is not None:
@@ -1458,7 +1534,7 @@ def fetch_security_od_requests(
         )
     except Exception as e:
         app.logger.exception("Firestore security OD fetch failed")
-        msg = str(e)
+        msg = _firestore_user_message(e)
         if any(
             x in msg.lower()
             for x in ("403", "permission", "disabled", "invalid_grant", "invalid jwt")
@@ -1562,15 +1638,16 @@ def _visitor_security_fully_approved(d: dict, md_offline: bool) -> bool:
     return bool(_normalize_visitor_otp(d.get("visitor_otp")))
 
 
-def _backfill_visitor_otp_if_md_offline(ref, d: dict, *, md_offline: bool) -> dict:
-    """Legacy rows: create OTP and persist OFFLINE md_status when JMD approved under MD offline."""
-    needs_bypass = _legacy_md_offline_bypass_candidate(d) or (
-        md_offline
-        and _jmd_approved_for_visitor(d)
-        and not _md_offline_bypass_on_request(d)
-    )
-    if not needs_bypass:
+def _backfill_visitor_otp_if_md_offline(
+    ref, d: dict, *, writes_left: list[int] | None = None
+) -> dict:
+    """Legacy rows only: OTP + OFFLINE md_status (do not write on every refresh)."""
+    if not _legacy_md_offline_bypass_candidate(d):
         return d
+    if writes_left is not None:
+        if writes_left[0] <= 0:
+            return d
+        writes_left[0] -= 1
     patch = {}
     if not _normalize_visitor_otp(d.get("visitor_otp")):
         patch["visitor_otp"] = f"{secrets.randbelow(1_000_000):06d}"
@@ -1602,10 +1679,14 @@ def _fetch_security_visitor_requests_inner(
     security_tab_unit: str = "unit-i",
 ):
     buf = []
-    for snap in db.collection("requests").stream():
+    legacy_writes = [_LEGACY_MD_BYPASS_WRITES_PER_LOAD]
+    snaps = (
+        _visitor_snapshots_for_ist_day(db, ist_day)
+        if ist_day is not None
+        else _security_requests_snapshots(db, "VISITOR")
+    )
+    for snap in snaps:
         d = snap.to_dict() or {}
-        if (d.get("type") or "").strip().upper() != "VISITOR":
-            continue
         visit_day = _visitor_coming_on_date(d)
         if ist_day is not None:
             if visit_day is None or visit_day != ist_day:
@@ -1622,8 +1703,10 @@ def _fetch_security_visitor_requests_inner(
     rows = []
     for _, _, d, snap_id in buf:
         ref = db.collection("requests").document(snap_id)
-        d = _backfill_visitor_otp_if_md_offline(ref, d, md_offline=md_offline)
-        d = _maybe_persist_legacy_md_offline_bypass(ref, d)
+        d = _backfill_visitor_otp_if_md_offline(ref, d, writes_left=legacy_writes)
+        d = _maybe_persist_legacy_md_offline_bypass(
+            ref, d, writes_left=legacy_writes
+        )
         names = d.get("visitor_names") or []
         if isinstance(names, str):
             names = [n.strip() for n in names.split(",") if n.strip()]
@@ -1670,6 +1753,139 @@ def _fetch_security_visitor_requests_inner(
     return rows
 
 
+def _parse_leave_ddmmy(raw: str):
+    s = (raw or "").strip()
+    if not s:
+        return None
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _leave_overlaps_ist_day(d: dict, ist_day) -> bool:
+    """True if this LEAVE request covers the given IST calendar date."""
+    if ist_day is None:
+        return True
+    target_ddmmy = ist_day.strftime("%d-%m-%Y")
+    leave_dates = d.get("leave_dates") or []
+    for x in leave_dates:
+        if str(x).strip() == target_ddmmy:
+            return True
+
+    from_s = d.get("leave_from_date") or ""
+    to_s = d.get("leave_to_date") or from_s
+    from_d = _parse_leave_ddmmy(str(from_s))
+    to_d = _parse_leave_ddmmy(str(to_s))
+    if from_d and to_d:
+        if to_d < from_d:
+            from_d, to_d = to_d, from_d
+        return from_d <= ist_day <= to_d
+    return False
+
+
+def _leave_snapshots_for_ist_day(db, ist_day, *, limit: int = 200):
+    """LEAVE rows for one IST calendar day (leave_dates array_contains)."""
+    if ist_day is None:
+        return _security_requests_by_type(db, "LEAVE", limit=limit)
+    date_str = ist_day.strftime("%d-%m-%Y")
+    coll = db.collection("requests")
+    try:
+        q = (
+            coll.where("type", "==", "LEAVE")
+            .where("leave_dates", "array_contains", date_str)
+            .limit(limit)
+        )
+        return list(q.stream())
+    except Exception as e:
+        app.logger.warning(
+            "Firestore leave date query failed, using type filter: %s", e
+        )
+    snaps = _security_requests_by_type(db, "LEAVE", limit=limit * 2)
+    out = []
+    for snap in snaps:
+        d = snap.to_dict() or {}
+        if _leave_overlaps_ist_day(d, ist_day):
+            out.append(snap)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _fetch_security_leave_requests_inner(
+    ist_day,
+    db,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    buf = []
+    for snap in _leave_snapshots_for_ist_day(db, ist_day, limit=400):
+        d = snap.to_dict() or {}
+        if jmd_route_filter and _request_jmd_route(d) != jmd_route_filter:
+            continue
+        ts = d.get("requested_datetime")
+        buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
+
+    buf.sort(key=lambda x: x[0], reverse=True)
+    buf = buf[:200]
+
+    rows = []
+    for _, d, snap_id in buf:
+        leave_days = d.get("leave_days")
+        if leave_days is None:
+            leave_days = len(d.get("leave_dates") or [])
+
+        rows.append(
+            {
+                "requested_datetime": _format_firestore_date_ist(
+                    d.get("requested_datetime")
+                ),
+                "employee_id": d.get("employee_id") or "",
+                "employee_name": d.get("employee_name") or "",
+                "department": d.get("department") or "",
+                "reason": d.get("reason") or "",
+                "leave_from_date": d.get("leave_from_date") or "",
+                "leave_to_date": d.get("leave_to_date") or "",
+                "leave_days": leave_days if leave_days is not None else "",
+                "jmd_status": _format_approval_label(
+                    (d.get("jmd_status") or "").strip()
+                ),
+            }
+        )
+    return rows
+
+
+def fetch_security_leave_requests(
+    ist_day=None,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    """Load LEAVE requests overlapping one IST calendar day, newest first, cap 200."""
+    db, err = _get_firestore_client()
+    if err:
+        return [], err
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _fetch_security_leave_requests_inner,
+                ist_day,
+                db,
+                jmd_route_filter=jmd_route_filter,
+            )
+            return future.result(timeout=25), None
+    except TimeoutError:
+        app.logger.error("Firestore security leave fetch timed out")
+        return [], (
+            "Firestore request timed out. Check that the Cloud Run service account has "
+            "Cloud Datastore User on whatsapp-approval-system."
+        )
+    except Exception as e:
+        app.logger.exception("Firestore security leave fetch failed")
+        return [], _firestore_user_message(e)
+
+
 def fetch_security_visitor_requests(
     ist_day=None,
     *,
@@ -1698,7 +1914,7 @@ def fetch_security_visitor_requests(
         )
     except Exception as e:
         app.logger.exception("Firestore security visitor fetch failed")
-        return [], str(e)
+        return [], _firestore_user_message(e)
 
 
 def _security_record_visitor_gate(
@@ -4309,6 +4525,7 @@ def documents():
 SECURITY_TABS = (
     ("on-duty", "OD Request"),
     ("visitor-request", "Visitor Request"),
+    ("leave-request", "Leave Request"),
     ("approver-status", "Approver Status"),
 )
 
@@ -4342,6 +4559,7 @@ def security():
     jmd_route_filter = _parse_security_unit_filter(selected_unit)
     od_requests = []
     visitor_requests = []
+    leave_requests = []
     approver_status_rows = []
     firestore_error = None
     if tab == "on-duty":
@@ -4355,6 +4573,11 @@ def security():
             jmd_route_filter=jmd_route_filter,
             security_tab_unit=selected_unit,
         )
+    elif tab == "leave-request":
+        leave_requests, firestore_error = fetch_security_leave_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+        )
     elif tab == "approver-status":
         db, err = _get_firestore_client()
         if err:
@@ -4364,7 +4587,7 @@ def security():
                 approver_status_rows = _fetch_security_approver_status(db)
             except Exception as e:
                 app.logger.exception("Firestore approver status fetch failed")
-                firestore_error = str(e)
+                firestore_error = _firestore_user_message(e)
     return render_template(
         "security.html",
         active_nav="security",
@@ -4372,6 +4595,7 @@ def security():
         selected_tab=tab,
         od_requests=od_requests,
         visitor_requests=visitor_requests,
+        leave_requests=leave_requests,
         approver_status_rows=approver_status_rows,
         firestore_error=firestore_error,
         selected_date_iso=selected_day.strftime("%Y-%m-%d"),
