@@ -1896,6 +1896,66 @@ def fetch_security_leave_requests(
         return [], _firestore_user_message(e)
 
 
+def _permission_type_kind(d: dict) -> str:
+    """late_in | early_out | other — from bot permission_type / permission_type_code."""
+    code = (d.get("permission_type_code") or "").strip().upper()
+    label = (d.get("permission_type") or "").strip().lower()
+    if code == "PERMISSION_LATE_IN" or label in ("late in", "latein"):
+        return "late_in"
+    if code == "PERMISSION_EARLY_OUT" or label in ("early out", "earlyout"):
+        return "early_out"
+    return "other"
+
+
+def _permission_jmd_approved_for_gate(d: dict) -> bool:
+    if d.get("cancelled_by_employee"):
+        return False
+    return (d.get("jmd_status") or "").strip().upper() == "APPROVED"
+
+
+def _permission_security_gate_flags(d: dict) -> dict:
+    """UI flags for Security permission Action column."""
+    kind = _permission_type_kind(d)
+    approved = _permission_jmd_approved_for_gate(d)
+    out_at = d.get("security_out_at")
+    in_at = d.get("security_in_at")
+
+    gate_closed = False
+    show_out_btn = False
+    show_in_btn = False
+    out_enabled = False
+    in_enabled = False
+
+    if kind == "late_in":
+        gate_closed = in_at is not None
+        show_in_btn = not gate_closed
+        in_enabled = approved and show_in_btn
+    elif kind == "early_out":
+        gate_closed = out_at is not None
+        show_out_btn = not gate_closed
+        out_enabled = approved and show_out_btn
+    else:
+        gate_closed = out_at is not None and in_at is not None
+        if gate_closed:
+            pass
+        elif out_at is None:
+            show_out_btn = True
+            out_enabled = approved
+        else:
+            show_in_btn = True
+            in_enabled = approved
+
+    return {
+        "gate_closed": gate_closed,
+        "show_out_btn": show_out_btn,
+        "show_in_btn": show_in_btn,
+        "out_enabled": out_enabled,
+        "in_enabled": in_enabled,
+        "permission_kind": kind,
+        "fully_approved": approved,
+    }
+
+
 def _permission_snapshots_for_ist_day(db, ist_day, *, limit: int = 200):
     """PERMISSION rows for one IST calendar day (permission_date DD-MM-YYYY)."""
     if ist_day is None:
@@ -1942,21 +2002,73 @@ def _fetch_security_permission_requests_inner(
     buf = buf[:200]
 
     rows = []
-    for _, d, _snap_id in buf:
+    for _, d, snap_id in buf:
+        gate = _permission_security_gate_flags(d)
         rows.append(
             {
-                "requested_datetime": _format_firestore_date_ist(
-                    d.get("requested_datetime")
-                ),
+                "request_id": d.get("request_id") or snap_id,
                 "employee_id": d.get("employee_id") or "",
                 "employee_name": d.get("employee_name") or "",
                 "department": d.get("department") or "",
                 "reason": d.get("reason") or "",
+                "permission_type": d.get("permission_type") or "",
                 "permission_date": d.get("permission_date") or "",
                 "jmd_status": _leave_jmd_display_label(d),
+                "security_out_at": _format_firestore_time_ist_12h(
+                    d.get("security_out_at")
+                ),
+                "security_in_at": _format_firestore_time_ist_12h(
+                    d.get("security_in_at")
+                ),
+                **gate,
             }
         )
     return rows
+
+
+def _security_record_permission_gate(request_id: str, action: str):
+    """Record OUT / IN for approved permission requests. Returns (ok, error_message)."""
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    action = (action or "").strip().lower()
+    if action not in ("out", "in"):
+        return False, "Invalid action"
+    rid = (request_id or "").strip()
+    if not rid:
+        return False, "Missing request id"
+    try:
+        ref = db.collection("requests").document(rid)
+        snap = ref.get()
+        if not snap.exists:
+            return False, "Request not found"
+        d = snap.to_dict() or {}
+        if (d.get("type") or "").strip().upper() != "PERMISSION":
+            return False, "Not a permission request"
+        if not _permission_jmd_approved_for_gate(d):
+            return False, "Permission is not approved yet"
+        kind = _permission_type_kind(d)
+        out_at = d.get("security_out_at")
+        in_at = d.get("security_in_at")
+        now = datetime.now(timezone.utc)
+        if action == "out":
+            if kind == "late_in":
+                return False, "OUT is not required for Late IN permission"
+            if out_at is not None:
+                return False, "Out time is already recorded"
+            ref.update({"security_out_at": now})
+            return True, None
+        if kind == "early_out":
+            return False, "IN is not required for Early OUT permission"
+        if in_at is not None:
+            return False, "In time is already recorded"
+        if kind == "other" and out_at is None:
+            return False, "Record OUT before IN"
+        ref.update({"security_in_at": now})
+        return True, None
+    except Exception as e:
+        app.logger.exception("security permission gate update failed")
+        return False, str(e)
 
 
 def fetch_security_permission_requests(
@@ -2046,7 +2158,7 @@ def _security_record_visitor_gate(
             return False, "Not a visitor request"
         md_wa = _md_whatsapp_for_security(db)
         md_offline = _approver_is_offline(db, md_wa) if md_wa else False
-        d = _backfill_visitor_otp_if_md_offline(ref, d, md_offline=md_offline)
+        d = _backfill_visitor_otp_if_md_offline(ref, d)
         if not _visitor_security_fully_approved(d, md_offline):
             return False, "Visitor request is not fully approved yet (MD approval pending)"
         in_field, out_field = _visitor_gate_field_names(d, security_unit)
@@ -4725,6 +4837,20 @@ def security_od_gate():
     action = (payload.get("action") or "").strip()
     odo_reading = payload.get("odo_reading")
     ok, err = _security_record_od_gate(request_id, action, odo_reading)
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Update failed"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/security/api/permission-gate", methods=["POST"])
+@login_required
+def security_permission_gate():
+    if not _user_can_access_security():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    request_id = (payload.get("request_id") or "").strip()
+    action = (payload.get("action") or "").strip()
+    ok, err = _security_record_permission_gate(request_id, action)
     if not ok:
         return jsonify({"ok": False, "error": err or "Update failed"}), 400
     return jsonify({"ok": True})

@@ -568,11 +568,13 @@
 						<tr>
 							<th scope="col" class="cell-freeze-emp">Employee ID</th>
 							<th scope="col">Employee</th>
+							<th scope="col" class="cell-freeze-action">Action</th>
 							<th scope="col">Department</th>
-							<th scope="col" class="cell-date">Requested Date</th>
-							<th scope="col" class="cell-date">Permission Date</th>
+							<th scope="col" class="cell-date">Date</th>
 							<th scope="col">Reason</th>
-							<th scope="col">JMD Approval</th>
+							<th scope="col">Approval</th>
+							<th scope="col" class="cell-date">In Time</th>
+							<th scope="col" class="cell-date">Out Time</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -581,16 +583,32 @@
 						<tr>
 							<td class="cell cell-freeze-emp">{{ row.employee_id or '—' }}</td>
 							<td class="cell">{{ row.employee_name|sentence_case }}</td>
+							<td class="cell cell-freeze-action">
+								{% if row.gate_closed %}
+								<button type="button" class="btn btn-sm btn-secondary" disabled>Closed</button>
+								{% elif row.out_enabled %}
+								<button type="button" class="btn btn-sm btn-primary permission-gate-btn" data-request-id="{{ row.request_id }}" data-action="out">OUT</button>
+								{% elif row.in_enabled %}
+								<button type="button" class="btn btn-sm btn-success permission-gate-btn" data-request-id="{{ row.request_id }}" data-action="in">IN</button>
+								{% elif row.show_out_btn %}
+								<button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Enabled when approval is Approved">OUT</button>
+								{% elif row.show_in_btn %}
+								<button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Enabled when approval is Approved">IN</button>
+								{% else %}
+								<span class="text-muted">—</span>
+								{% endif %}
+							</td>
 							<td class="cell cell-dept">{{ row.department }}</td>
-							<td class="cell cell-date">{{ row.requested_datetime or '—' }}</td>
 							<td class="cell cell-date">{{ row.permission_date or '—' }}</td>
 							<td class="cell">{{ row.reason|sentence_case }}</td>
 							<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status|sentence_case }}</td>
+							<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
+							<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
 						</tr>
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="7" class="cell text-center text-muted py-5">No permission requests for this date.</td>
+							<td colspan="9" class="cell text-center text-muted py-5">No permission requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
@@ -1029,6 +1047,42 @@
 		".security-visitor-request-select",
 		document.getElementById("security-visitor-delete-btn")
 	);
+
+	var permissionGateEndpoint = {{ url_for('security_permission_gate') | tojson }};
+
+	function postPermissionGate(requestId, action, onError) {
+		return fetch(permissionGateEndpoint, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ request_id: requestId, action: action }),
+		})
+			.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+			.then(function (x) {
+				if (!x.ok || !x.j.ok) {
+					if (onError) onError((x.j && x.j.error) || "Could not save.");
+					return false;
+				}
+				window.location.reload();
+				return true;
+			})
+			.catch(function () {
+				if (onError) onError("Network error.");
+				return false;
+			});
+	}
+
+	document.querySelectorAll(".permission-gate-btn").forEach(function (btn) {
+		btn.addEventListener("click", function () {
+			var requestId = this.getAttribute("data-request-id");
+			var action = this.getAttribute("data-action");
+			if (!requestId || !action) return;
+			btn.disabled = true;
+			postPermissionGate(requestId, action, function (msg) {
+				alert(msg);
+				btn.disabled = false;
+			});
+		});
+	});
 
 	document.querySelectorAll(".od-gate-btn").forEach(function (btn) {
 		btn.addEventListener("click", function () {
