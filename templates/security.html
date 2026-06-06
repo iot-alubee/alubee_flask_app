@@ -532,6 +532,7 @@
 		<div class="app-card-body p-3 security-od-toolbar">
 			<form method="get" action="{{ url_for('security') }}" class="d-flex flex-wrap align-items-end gap-3">
 				<input type="hidden" name="tab" value="permission-request">
+				<input type="hidden" name="permission_view" value="{{ permission_view }}">
 				<div>
 					<label for="security-permission-date" class="form-label small mb-1">Date (IST)</label>
 					<input id="security-permission-date" type="date" name="date" class="form-control form-control-sm" value="{{ selected_date_iso }}">
@@ -555,32 +556,132 @@
 					</select>
 					{% endif %}
 				</div>
+				<div>
+					<span class="form-label small mb-1 d-block">View</span>
+					<div class="btn-group btn-group-sm" role="group" aria-label="Permission view">
+						<a
+							class="btn {% if permission_view == 'emp' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+							href="{{ url_for('security', tab='permission-request', permission_view='emp', date=selected_date_iso, unit=selected_unit) }}"
+						>EMP</a>
+						<a
+							class="btn {% if permission_view == 'cl' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+							href="{{ url_for('security', tab='permission-request', permission_view='cl', date=selected_date_iso, unit=selected_unit) }}"
+						>CL</a>
+					</div>
+				</div>
 				<div class="d-flex gap-2 align-items-center ms-auto">
 					<button type="submit" class="btn btn-sm btn-primary px-3">Refresh</button>
+					{% if can_delete_requests %}
+					<button type="button" class="btn btn-sm btn-outline-danger px-2" id="security-permission-delete-btn" disabled title="Delete selected requests" aria-label="Delete selected requests">
+						<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trash" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+							<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0A.5.5 0 0 1 9 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+							<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+						</svg>
+					</button>
+					{% endif %}
 				</div>
 			</form>
 		</div>
 
+		{% if permission_view == 'cl' %}
 		<div class="app-card-body p-0 p-md-0">
 			<div class="table-responsive security-od-scroll">
-				<table class="table table-hover security-od-table mb-0">
+				<table class="table table-hover security-od-table mb-0{% if can_delete_requests %} security-table-has-select{% endif %}">
 					<thead class="table-light">
 						<tr>
-							<th scope="col" class="cell-freeze-emp">Employee ID</th>
-							<th scope="col">Employee</th>
+							{% if can_delete_requests %}
+							<th scope="col" class="cell-freeze-select">
+								<input type="checkbox" class="form-check-input security-select-all" id="security-permission-select-all" title="Select all" aria-label="Select all requests">
+							</th>
+							{% endif %}
+							<th scope="col" class="cell-freeze-emp">CL Name</th>
+							<th scope="col">Raised By</th>
 							<th scope="col" class="cell-freeze-action">Action</th>
 							<th scope="col">Department</th>
-							<th scope="col" class="cell-date">Date</th>
+							<th scope="col">Shift</th>
 							<th scope="col">Reason</th>
 							<th scope="col">Approval</th>
 							<th scope="col" class="cell-date">In Time</th>
 							<th scope="col" class="cell-date">Out Time</th>
+							<th scope="col" class="cell-date">Permission Hour</th>
 						</tr>
 					</thead>
 					<tbody>
-						{% if permission_requests %}
-						{% for row in permission_requests %}
+						{% if permission_cl_requests %}
+						{% for row in permission_cl_requests %}
 						<tr>
+							{% if can_delete_requests %}
+							<td class="cell cell-freeze-select">
+								<input type="checkbox" class="form-check-input security-request-select security-permission-request-select" value="{{ row.request_id }}" aria-label="Select request">
+							</td>
+							{% endif %}
+							<td class="cell cell-freeze-emp">{{ row.cl_employee_name|sentence_case }}</td>
+							<td class="cell">{{ row.raised_by_name|sentence_case }}</td>
+							<td class="cell cell-freeze-action">
+								{% if row.gate_closed %}
+								<button type="button" class="btn btn-sm btn-secondary" disabled>Closed</button>
+								{% elif row.out_enabled %}
+								<button type="button" class="btn btn-sm btn-primary permission-gate-btn" data-request-id="{{ row.request_id }}" data-action="out">OUT</button>
+								{% elif row.in_enabled %}
+								<button type="button" class="btn btn-sm btn-success permission-gate-btn" data-request-id="{{ row.request_id }}" data-action="in">IN</button>
+								{% elif row.show_out_btn %}
+								<button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Enabled when approval is Approved">OUT</button>
+								{% elif row.show_in_btn %}
+								<button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Enabled when approval is Approved">IN</button>
+								{% else %}
+								<span class="text-muted">—</span>
+								{% endif %}
+							</td>
+							<td class="cell cell-dept">{{ row.department }}</td>
+							<td class="cell">{{ row.permission_shift }}</td>
+							<td class="cell">{{ row.reason|sentence_case }}</td>
+							<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status|sentence_case }}</td>
+							<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
+							<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
+							<td class="cell cell-date">{{ row.permission_hour or '—' }}</td>
+						</tr>
+						{% endfor %}
+						{% else %}
+						<tr>
+							<td colspan="{% if can_delete_requests %}11{% else %}10{% endif %}" class="cell text-center text-muted py-5">No CL permission requests for this date.</td>
+						</tr>
+						{% endif %}
+					</tbody>
+				</table>
+			</div>
+		</div>
+		{% else %}
+		<div class="app-card-body p-0 p-md-0">
+			<div class="table-responsive security-od-scroll">
+				<table class="table table-hover security-od-table mb-0{% if can_delete_requests %} security-table-has-select{% endif %}">
+					<thead class="table-light">
+						<tr>
+							{% if can_delete_requests %}
+							<th scope="col" class="cell-freeze-select">
+								<input type="checkbox" class="form-check-input security-select-all" id="security-permission-select-all" title="Select all" aria-label="Select all requests">
+							</th>
+							{% endif %}
+							<th scope="col" class="cell-freeze-emp">Employee ID</th>
+							<th scope="col">Employee</th>
+							<th scope="col" class="cell-freeze-action">Action</th>
+							<th scope="col">Department</th>
+							<th scope="col">Shift</th>
+							<th scope="col">Reason</th>
+							<th scope="col">Approval</th>
+							<th scope="col" class="cell-date">In Time</th>
+							<th scope="col" class="cell-date">Out Time</th>
+							<th scope="col" class="cell-date">Permission Hour</th>
+						</tr>
+					</thead>
+					<tbody>
+						{% if permission_emp_requests %}
+						{% for row in permission_emp_requests %}
+						<tr>
+							{% if can_delete_requests %}
+							<td class="cell cell-freeze-select">
+								<input type="checkbox" class="form-check-input security-request-select security-permission-request-select" value="{{ row.request_id }}" aria-label="Select request">
+							</td>
+							{% endif %}
 							<td class="cell cell-freeze-emp">{{ row.employee_id or '—' }}</td>
 							<td class="cell">{{ row.employee_name|sentence_case }}</td>
 							<td class="cell cell-freeze-action">
@@ -599,22 +700,24 @@
 								{% endif %}
 							</td>
 							<td class="cell cell-dept">{{ row.department }}</td>
-							<td class="cell cell-date">{{ row.permission_date or '—' }}</td>
+							<td class="cell">{{ row.permission_shift }}</td>
 							<td class="cell">{{ row.reason|sentence_case }}</td>
 							<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status|sentence_case }}</td>
 							<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
 							<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
+							<td class="cell cell-date">{{ row.permission_hour or '—' }}</td>
 						</tr>
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="9" class="cell text-center text-muted py-5">No permission requests for this date.</td>
+							<td colspan="{% if can_delete_requests %}11{% else %}10{% endif %}" class="cell text-center text-muted py-5">No employee permission requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
 				</table>
 			</div>
 		</div>
+		{% endif %}
 	</div>
 	{% endif %}
 
@@ -1046,6 +1149,11 @@
 		document.getElementById("security-visitor-select-all"),
 		".security-visitor-request-select",
 		document.getElementById("security-visitor-delete-btn")
+	);
+	initSecurityDeleteToolbar(
+		document.getElementById("security-permission-select-all"),
+		".security-permission-request-select",
+		document.getElementById("security-permission-delete-btn")
 	);
 
 	var permissionGateEndpoint = {{ url_for('security_permission_gate') | tojson }};

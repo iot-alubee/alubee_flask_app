@@ -1896,6 +1896,150 @@ def fetch_security_leave_requests(
         return [], _firestore_user_message(e)
 
 
+def _parse_permission_ddmmy(raw: str):
+    s = (raw or "").strip()
+    if not s:
+        return None
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_shift_hhmm(raw: str):
+    s = (raw or "").strip()
+    if not s:
+        return None
+    parts = s.split(":")
+    try:
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return None
+
+
+def _shift_bounds_on_date(perm_date, login: str, logout: str):
+    """IST datetimes for shift start/end; logout next day if overnight."""
+    li = _parse_shift_hhmm(login)
+    lo = _parse_shift_hhmm(logout)
+    if not li or not lo or not perm_date:
+        return None, None
+    tz = _ist_tzinfo()
+    start = datetime(perm_date.year, perm_date.month, perm_date.day, li[0], li[1], tzinfo=tz)
+    end = datetime(perm_date.year, perm_date.month, perm_date.day, lo[0], lo[1], tzinfo=tz)
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
+
+
+def _resolve_shift_times(user: dict | None, permission_shift: str):
+    """Regular login/logout HH:MM from user doc (GS = shift_login/logout)."""
+    if not user:
+        return None
+    st = (user.get("shift_type") or "GS").strip().upper()
+    shift = (permission_shift or "I").strip().upper()
+    if st == "GS":
+        login = user.get("shift_login")
+        logout = user.get("shift_logout")
+    elif shift in ("II", "2"):
+        login = user.get("shift2_login")
+        logout = user.get("shift2_logout")
+    else:
+        login = user.get("shift1_login")
+        logout = user.get("shift1_logout")
+    if not login or not logout:
+        return None
+    return str(login).strip(), str(logout).strip()
+
+
+def _permission_shift_display(user: dict | None, d: dict) -> str:
+    ps = (d.get("permission_shift") or "").strip().upper()
+    if ps in ("I", "1"):
+        return "I"
+    if ps in ("II", "2"):
+        return "II"
+    if user and (user.get("shift_type") or "").strip().upper() == "GS":
+        return "I"
+    return "—"
+
+
+def _format_permission_duration(minutes: int) -> str:
+    if minutes <= 0:
+        return "—"
+    hours, mins = divmod(minutes, 60)
+    if hours and mins:
+        return f"{hours}H {mins}M"
+    if hours:
+        return f"{hours}H"
+    return f"{mins}M"
+
+
+def _permission_hour_approved(d: dict) -> bool:
+    if d.get("cancelled_by_employee"):
+        return False
+    return (d.get("jmd_status") or "").strip().upper() == "APPROVED"
+
+
+def _compute_permission_hour(d: dict, user: dict | None) -> str:
+    if not _permission_hour_approved(d):
+        return "—"
+    perm_date = _parse_permission_ddmmy(
+        (d.get("permission_work_date") or d.get("permission_date") or "")
+    )
+    if not perm_date:
+        return "—"
+    shift_code = (d.get("permission_shift") or "").strip().upper()
+    if user and (user.get("shift_type") or "").strip().upper() == "GS":
+        shift_code = "I"
+    bounds = _resolve_shift_times(user, shift_code)
+    if not bounds:
+        return "—"
+    reg_in, reg_out = _shift_bounds_on_date(perm_date, bounds[0], bounds[1])
+    if not reg_in or not reg_out:
+        return "—"
+
+    in_at = _firestore_value_to_utc_datetime(d.get("security_in_at"))
+    out_at = _firestore_value_to_utc_datetime(d.get("security_out_at"))
+    if in_at:
+        in_at = in_at.astimezone(_ist_tzinfo())
+    if out_at:
+        out_at = out_at.astimezone(_ist_tzinfo())
+
+    kind = _permission_type_kind(d)
+    if kind == "other":
+        if not in_at or not out_at:
+            return "—"
+        mins = int((in_at - out_at).total_seconds() // 60)
+        return _format_permission_duration(mins)
+    if kind == "early_out":
+        if not out_at:
+            return "—"
+        mins = abs(int((out_at - reg_out).total_seconds() // 60))
+        return _format_permission_duration(mins)
+    if kind == "late_in":
+        if not in_at:
+            return "—"
+        mins = int((in_at - reg_in).total_seconds() // 60)
+        return _format_permission_duration(mins)
+    return "—"
+
+
+def _load_users_by_wa(db, wa_ids: set[str]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for wa in wa_ids:
+        key = (wa or "").strip()
+        if not key:
+            continue
+        try:
+            snap = db.collection("users").document(key).get()
+            if snap.exists:
+                out[key] = snap.to_dict() or {}
+        except Exception:
+            app.logger.warning("users lookup failed wa=%s", key)
+    return out
+
+
 def _permission_type_kind(d: dict) -> str:
     """late_in | early_out | other — from bot permission_type / permission_type_code."""
     code = (d.get("permission_type_code") or "").strip().upper()
@@ -1956,8 +2100,16 @@ def _permission_security_gate_flags(d: dict) -> dict:
     }
 
 
+def _permission_row_matches_ist_day(d: dict, date_str: str) -> bool:
+    if (d.get("permission_date") or "").strip() == date_str:
+        return True
+    if (d.get("permission_work_date") or "").strip() == date_str:
+        return True
+    return False
+
+
 def _permission_snapshots_for_ist_day(db, ist_day, *, limit: int = 200):
-    """PERMISSION rows for one IST calendar day (permission_date DD-MM-YYYY)."""
+    """PERMISSION rows for one IST calendar day (work date or request date)."""
     if ist_day is None:
         return _security_requests_by_type(db, "PERMISSION", limit=limit)
     date_str = ist_day.strftime("%d-%m-%Y")
@@ -1968,7 +2120,15 @@ def _permission_snapshots_for_ist_day(db, ist_day, *, limit: int = 200):
             .where("permission_date", "==", date_str)
             .limit(limit)
         )
-        return list(q.stream())
+        snaps = {snap.id: snap for snap in q.stream()}
+        q2 = (
+            coll.where("type", "==", "PERMISSION")
+            .where("permission_work_date", "==", date_str)
+            .limit(limit)
+        )
+        for snap in q2.stream():
+            snaps[snap.id] = snap
+        return list(snaps.values())[:limit]
     except Exception as e:
         app.logger.warning(
             "Firestore permission date query failed, using type filter: %s", e
@@ -1977,7 +2137,7 @@ def _permission_snapshots_for_ist_day(db, ist_day, *, limit: int = 200):
     out = []
     for snap in snaps:
         d = snap.to_dict() or {}
-        if (d.get("permission_date") or "").strip() == date_str:
+        if _permission_row_matches_ist_day(d, date_str):
             out.append(snap)
         if len(out) >= limit:
             break
@@ -2001,29 +2161,41 @@ def _fetch_security_permission_requests_inner(
     buf.sort(key=lambda x: x[0], reverse=True)
     buf = buf[:200]
 
-    rows = []
+    wa_ids = {(d.get("employee") or "").strip() for _, d, _ in buf if (d.get("employee") or "").strip()}
+    users_by_wa = _load_users_by_wa(db, wa_ids)
+
+    emp_rows = []
+    cl_rows = []
     for _, d, snap_id in buf:
         gate = _permission_security_gate_flags(d)
-        rows.append(
-            {
-                "request_id": d.get("request_id") or snap_id,
-                "employee_id": d.get("employee_id") or "",
-                "employee_name": d.get("employee_name") or "",
-                "department": d.get("department") or "",
-                "reason": d.get("reason") or "",
-                "permission_type": d.get("permission_type") or "",
-                "permission_date": d.get("permission_date") or "",
-                "jmd_status": _leave_jmd_display_label(d),
-                "security_out_at": _format_firestore_time_ist_12h(
-                    d.get("security_out_at")
-                ),
-                "security_in_at": _format_firestore_time_ist_12h(
-                    d.get("security_in_at")
-                ),
-                **gate,
-            }
-        )
-    return rows
+        wa = (d.get("employee") or "").strip()
+        user = users_by_wa.get(wa)
+        is_cl = (d.get("permission_for") or "").strip().lower() == "cl"
+        row = {
+            "request_id": d.get("request_id") or snap_id,
+            "employee_id": d.get("employee_id") or "",
+            "employee_name": d.get("employee_name") or "",
+            "cl_employee_name": d.get("cl_employee_name") or "",
+            "raised_by_name": d.get("raised_by_name") or d.get("employee_name") or "",
+            "department": d.get("department") or "",
+            "reason": d.get("reason") or "",
+            "permission_type": d.get("permission_type") or "",
+            "permission_shift": _permission_shift_display(user, d),
+            "jmd_status": _leave_jmd_display_label(d),
+            "security_out_at": _format_firestore_time_ist_12h(
+                d.get("security_out_at")
+            ),
+            "security_in_at": _format_firestore_time_ist_12h(
+                d.get("security_in_at")
+            ),
+            "permission_hour": _compute_permission_hour(d, user),
+            **gate,
+        }
+        if is_cl:
+            cl_rows.append(row)
+        else:
+            emp_rows.append(row)
+    return emp_rows, cl_rows
 
 
 def _security_record_permission_gate(request_id: str, action: str):
@@ -2076,10 +2248,10 @@ def fetch_security_permission_requests(
     *,
     jmd_route_filter: str | None = None,
 ):
-    """Load PERMISSION requests for one IST calendar day, newest first, cap 200."""
+    """Load PERMISSION requests for one IST day; returns (emp_rows, cl_rows, error)."""
     db, err = _get_firestore_client()
     if err:
-        return [], err
+        return [], [], err
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(
@@ -2088,16 +2260,17 @@ def fetch_security_permission_requests(
                 db,
                 jmd_route_filter=jmd_route_filter,
             )
-            return future.result(timeout=25), None
+            emp_rows, cl_rows = future.result(timeout=25)
+            return emp_rows, cl_rows, None
     except TimeoutError:
         app.logger.error("Firestore security permission fetch timed out")
-        return [], (
+        return [], [], (
             "Firestore request timed out. Check that the Cloud Run service account has "
             "Cloud Datastore User on whatsapp-approval-system."
         )
     except Exception as e:
         app.logger.exception("Firestore security permission fetch failed")
-        return [], _firestore_user_message(e)
+        return [], [], _firestore_user_message(e)
 
 
 def fetch_security_visitor_requests(
@@ -4775,7 +4948,11 @@ def security():
     od_requests = []
     visitor_requests = []
     leave_requests = []
-    permission_requests = []
+    permission_emp_requests = []
+    permission_cl_requests = []
+    permission_view = (request.args.get("permission_view") or "emp").strip().lower()
+    if permission_view not in ("emp", "cl"):
+        permission_view = "emp"
     approver_status_rows = []
     firestore_error = None
     if tab == "on-duty":
@@ -4795,9 +4972,11 @@ def security():
             jmd_route_filter=jmd_route_filter,
         )
     elif tab == "permission-request":
-        permission_requests, firestore_error = fetch_security_permission_requests(
-            ist_day=selected_day,
-            jmd_route_filter=jmd_route_filter,
+        permission_emp_requests, permission_cl_requests, firestore_error = (
+            fetch_security_permission_requests(
+                ist_day=selected_day,
+                jmd_route_filter=jmd_route_filter,
+            )
         )
     elif tab == "approver-status":
         db, err = _get_firestore_client()
@@ -4817,7 +4996,9 @@ def security():
         od_requests=od_requests,
         visitor_requests=visitor_requests,
         leave_requests=leave_requests,
-        permission_requests=permission_requests,
+        permission_emp_requests=permission_emp_requests,
+        permission_cl_requests=permission_cl_requests,
+        permission_view=permission_view,
         approver_status_rows=approver_status_rows,
         firestore_error=firestore_error,
         selected_date_iso=selected_day.strftime("%Y-%m-%d"),
@@ -4877,7 +5058,7 @@ def security_visitor_gate():
 @app.route("/security/api/delete-request", methods=["POST"])
 @login_required
 def security_delete_request():
-    """Admin only: delete one OD or visitor request from Firestore."""
+    """Admin only: delete one request (OD, visitor, permission, etc.) from Firestore."""
     if not _user_is_admin():
         abort(403)
     payload = request.get_json(silent=True) or {}
