@@ -1019,7 +1019,6 @@ def _fetch_security_approver_status(db):
         ("JMD I", _wa_id_from_env("JMD_I_WHATSAPP_NUMBER", "JMD_WHATSAPP_NUMBER")),
         ("JMD II", _wa_id_from_env("JMD_II_WHATSAPP_NUMBER")),
         ("MD", _wa_id_from_env("MD_WHATSAPP_NUMBER")),
-        ("TEST MD", _wa_id_from_env("TEST_MD_WHATSAPP_NUMBER")),
     ]
     rows = []
     for role, wa_id in approvers:
@@ -1790,12 +1789,27 @@ def _leave_overlaps_ist_day(d: dict, ist_day) -> bool:
     return False
 
 
-def _leave_jmd_display_label(d: dict) -> str:
-    """JMD column for Security leave tab (employee cancel vs JMD deny)."""
+def _leave_approval_statuses_for_display(
+    d: dict, *, md_offline: bool = False
+) -> tuple[str, str]:
+    """JMD + MD columns for Security leave tab."""
     if d.get("cancelled_by_employee"):
-        return "Cancelled"
-    raw = (d.get("jmd_status") or "").strip()
-    return _format_approval_label(raw)
+        return "Cancelled", "N/A"
+    return _od_approval_statuses_for_display(d, md_offline=md_offline)
+
+
+def _leave_jmd_display_label(d: dict) -> str:
+    """First approval column (legacy helper)."""
+    return _leave_approval_statuses_for_display(d)[0]
+
+
+def _permission_approval_statuses_for_display(
+    d: dict, *, md_offline: bool = False
+) -> tuple[str, str]:
+    """Two-step approval columns for Security permission tab."""
+    if d.get("cancelled_by_employee"):
+        return "Cancelled", "N/A"
+    return _od_approval_statuses_for_display(d, md_offline=md_offline)
 
 
 def _leave_snapshots_for_ist_day(db, ist_day, *, limit: int = 200):
@@ -1843,12 +1857,17 @@ def _fetch_security_leave_requests_inner(
     buf.sort(key=lambda x: x[0], reverse=True)
     buf = buf[:200]
 
+    md_wa = _md_whatsapp_for_security(db)
+    md_offline = _approver_is_offline(db, md_wa)
     rows = []
     for _, d, snap_id in buf:
         leave_days = d.get("leave_days")
         if leave_days is None:
             leave_days = len(d.get("leave_dates") or [])
 
+        jmd_display, md_display = _leave_approval_statuses_for_display(
+            d, md_offline=md_offline
+        )
         rows.append(
             {
                 "requested_datetime": _format_firestore_date_ist(
@@ -1861,7 +1880,8 @@ def _fetch_security_leave_requests_inner(
                 "leave_from_date": d.get("leave_from_date") or "",
                 "leave_to_date": d.get("leave_to_date") or "",
                 "leave_days": leave_days if leave_days is not None else "",
-                "jmd_status": _leave_jmd_display_label(d),
+                "jmd_status": jmd_display,
+                "md_status": md_display,
             }
         )
     return rows
@@ -1978,7 +1998,7 @@ def _format_permission_duration(minutes: int) -> str:
 def _permission_hour_approved(d: dict) -> bool:
     if d.get("cancelled_by_employee"):
         return False
-    return (d.get("jmd_status") or "").strip().upper() == "APPROVED"
+    return _permission_jmd_approved_for_gate(d)
 
 
 def _compute_permission_hour(d: dict, user: dict | None) -> str:
@@ -2054,7 +2074,17 @@ def _permission_type_kind(d: dict) -> str:
 def _permission_jmd_approved_for_gate(d: dict) -> bool:
     if d.get("cancelled_by_employee"):
         return False
-    return (d.get("jmd_status") or "").strip().upper() == "APPROVED"
+    jmd = (d.get("jmd_status") or "").strip().upper()
+    if jmd != "APPROVED":
+        return False
+    md = (d.get("md_status") or "").strip().upper()
+    if md in ("", "N/A"):
+        return True
+    if md == "OFFLINE" and d.get("md_offline_bypass"):
+        return True
+    if md in ("AWAITING_JMD", "PENDING"):
+        return False
+    return md == "APPROVED"
 
 
 def _permission_security_gate_flags(d: dict) -> dict:
@@ -2163,6 +2193,8 @@ def _fetch_security_permission_requests_inner(
 
     wa_ids = {(d.get("employee") or "").strip() for _, d, _ in buf if (d.get("employee") or "").strip()}
     users_by_wa = _load_users_by_wa(db, wa_ids)
+    md_wa = _md_whatsapp_for_security(db)
+    md_offline = _approver_is_offline(db, md_wa)
 
     emp_rows = []
     cl_rows = []
@@ -2171,6 +2203,10 @@ def _fetch_security_permission_requests_inner(
         wa = (d.get("employee") or "").strip()
         user = users_by_wa.get(wa)
         is_cl = (d.get("permission_for") or "").strip().lower() == "cl"
+        jmd_display, md_display = _permission_approval_statuses_for_display(
+            d,
+            md_offline=False if is_cl else md_offline,
+        )
         row = {
             "request_id": d.get("request_id") or snap_id,
             "employee_id": d.get("employee_id") or "",
@@ -2181,7 +2217,8 @@ def _fetch_security_permission_requests_inner(
             "reason": d.get("reason") or "",
             "permission_type": d.get("permission_type") or "",
             "permission_shift": _permission_shift_display(user, d),
-            "jmd_status": _leave_jmd_display_label(d),
+            "jmd_status": jmd_display,
+            "md_status": md_display,
             "security_out_at": _format_firestore_time_ist_12h(
                 d.get("security_out_at")
             ),

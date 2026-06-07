@@ -498,6 +498,7 @@
 							<th scope="col" class="cell-date">From Date</th>
 							<th scope="col" class="cell-date">To Date</th>
 							<th scope="col">JMD Approval</th>
+							<th scope="col">MD Approval</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -513,11 +514,12 @@
 							<td class="cell cell-date">{{ row.leave_from_date or '—' }}</td>
 							<td class="cell cell-date">{{ row.leave_to_date or '—' }}</td>
 							<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status|sentence_case }}</td>
+							<td class="cell {{ row.md_status|approval_cell_class }}">{% if row.md_status == 'Offline' %}Offline{% else %}{{ row.md_status|sentence_case }}{% endif %}</td>
 						</tr>
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="9" class="cell text-center text-muted py-5">No leave requests for this date.</td>
+							<td colspan="10" class="cell text-center text-muted py-5">No leave requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
@@ -600,7 +602,8 @@
 							<th scope="col">Department</th>
 							<th scope="col">Shift</th>
 							<th scope="col">Reason</th>
-							<th scope="col">Approval</th>
+							<th scope="col">PPC Approval</th>
+							<th scope="col">HR Approval</th>
 							<th scope="col" class="cell-date">In Time</th>
 							<th scope="col" class="cell-date">Out Time</th>
 							<th scope="col" class="cell-date">Permission Hour</th>
@@ -636,6 +639,7 @@
 							<td class="cell">{{ row.permission_shift }}</td>
 							<td class="cell">{{ row.reason|sentence_case }}</td>
 							<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status|sentence_case }}</td>
+							<td class="cell {{ row.md_status|approval_cell_class }}">{% if row.md_status == 'Offline' %}Offline{% else %}{{ row.md_status|sentence_case }}{% endif %}</td>
 							<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
 							<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
 							<td class="cell cell-date">{{ row.permission_hour or '—' }}</td>
@@ -643,7 +647,7 @@
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="{% if can_delete_requests %}11{% else %}10{% endif %}" class="cell text-center text-muted py-5">No CL permission requests for this date.</td>
+							<td colspan="{% if can_delete_requests %}12{% else %}11{% endif %}" class="cell text-center text-muted py-5">No CL permission requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
@@ -667,7 +671,8 @@
 							<th scope="col">Department</th>
 							<th scope="col">Shift</th>
 							<th scope="col">Reason</th>
-							<th scope="col">Approval</th>
+							<th scope="col">JMD Approval</th>
+							<th scope="col">MD Approval</th>
 							<th scope="col" class="cell-date">In Time</th>
 							<th scope="col" class="cell-date">Out Time</th>
 							<th scope="col" class="cell-date">Permission Hour</th>
@@ -703,6 +708,7 @@
 							<td class="cell">{{ row.permission_shift }}</td>
 							<td class="cell">{{ row.reason|sentence_case }}</td>
 							<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status|sentence_case }}</td>
+							<td class="cell {{ row.md_status|approval_cell_class }}">{% if row.md_status == 'Offline' %}Offline{% else %}{{ row.md_status|sentence_case }}{% endif %}</td>
 							<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
 							<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
 							<td class="cell cell-date">{{ row.permission_hour or '—' }}</td>
@@ -710,7 +716,7 @@
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="{% if can_delete_requests %}11{% else %}10{% endif %}" class="cell text-center text-muted py-5">No employee permission requests for this date.</td>
+							<td colspan="{% if can_delete_requests %}12{% else %}11{% endif %}" class="cell text-center text-muted py-5">No employee permission requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
