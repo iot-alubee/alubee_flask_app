@@ -1798,7 +1798,15 @@ def _leave_approval_statuses_for_display(
     """JMD + MD columns for Security leave tab."""
     if d.get("cancelled_by_employee"):
         return "Cancelled", "N/A"
-    return _od_approval_statuses_for_display(d, md_offline=md_offline)
+    jmd_display, md_display = _od_approval_statuses_for_display(
+        d, md_offline=False
+    )
+    md_raw = (d.get("md_status") or "").strip().upper()
+    if md_raw == "PENDING":
+        md_display = "Pending"
+    elif _md_offline_bypass_on_request(d):
+        md_display = "Offline"
+    return jmd_display, md_display
 
 
 def _leave_jmd_display_label(d: dict) -> str:
