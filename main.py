@@ -71,6 +71,7 @@ login_manager.login_message = "Please log in to access this page."
 
 SECURITY_UNIT_I_EMAIL = "security.1@alubee.com"
 SECURITY_UNIT_II_EMAIL = "security.2@alubee.com"
+HR_EMAIL = "hr@alubee.com"
 
 # Built-in accounts (SQLite). Change passwords after deploy in production.
 _DEFAULT_ADMIN = ("admin@alubee.com", "admin123")
@@ -78,6 +79,7 @@ _DEFAULT_SECURITY_USERS = (
     (SECURITY_UNIT_I_EMAIL, "security@alubee"),
     (SECURITY_UNIT_II_EMAIL, "security@alubee"),
 )
+_DEFAULT_HR_USER = (HR_EMAIL, "hr@alubee")
 _SECURITY_VIEWER_PAGES = ("security",)
 
 
@@ -119,6 +121,7 @@ def _ensure_auth_database():
             conn.close()
         for email, password in _DEFAULT_SECURITY_USERS:
             _ensure_builtin_security_user(email, password)
+        _ensure_builtin_security_user(*_DEFAULT_HR_USER)
     except Exception as e:
         app.logger.exception("Auth database initialization failed: %s", e)
 
@@ -1870,6 +1873,7 @@ def _fetch_security_leave_requests_inner(
         )
         rows.append(
             {
+                "request_id": d.get("request_id") or snap_id,
                 "requested_datetime": _format_firestore_date_ist(
                     d.get("requested_datetime")
                 ),

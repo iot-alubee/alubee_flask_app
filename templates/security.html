@@ -480,15 +480,28 @@
 				</div>
 				<div class="d-flex gap-2 align-items-center ms-auto">
 					<button type="submit" class="btn btn-sm btn-primary px-3">Refresh</button>
+					{% if can_delete_requests %}
+					<button type="button" class="btn btn-sm btn-outline-danger px-2" id="security-leave-delete-btn" disabled title="Delete selected requests" aria-label="Delete selected requests">
+						<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trash" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+							<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0A.5.5 0 0 1 9 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+							<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+						</svg>
+					</button>
+					{% endif %}
 				</div>
 			</form>
 		</div>
 
 		<div class="app-card-body p-0 p-md-0">
 			<div class="table-responsive security-od-scroll">
-				<table class="table table-hover security-od-table mb-0">
+				<table class="table table-hover security-od-table mb-0{% if can_delete_requests %} security-table-has-select{% endif %}">
 					<thead class="table-light">
 						<tr>
+							{% if can_delete_requests %}
+							<th scope="col" class="cell-freeze-select">
+								<input type="checkbox" class="form-check-input security-select-all" id="security-leave-select-all" title="Select all" aria-label="Select all requests">
+							</th>
+							{% endif %}
 							<th scope="col" class="cell-freeze-emp">Employee ID</th>
 							<th scope="col">Employee</th>
 							<th scope="col">Department</th>
@@ -505,6 +518,11 @@
 						{% if leave_requests %}
 						{% for row in leave_requests %}
 						<tr>
+							{% if can_delete_requests %}
+							<td class="cell cell-freeze-select">
+								<input type="checkbox" class="form-check-input security-request-select security-leave-request-select" value="{{ row.request_id }}" aria-label="Select request">
+							</td>
+							{% endif %}
 							<td class="cell cell-freeze-emp">{{ row.employee_id or '—' }}</td>
 							<td class="cell">{{ row.employee_name|sentence_case }}</td>
 							<td class="cell cell-dept">{{ row.department }}</td>
@@ -519,7 +537,7 @@
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="10" class="cell text-center text-muted py-5">No leave requests for this date.</td>
+							<td colspan="{% if can_delete_requests %}11{% else %}10{% endif %}" class="cell text-center text-muted py-5">No leave requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
@@ -1160,6 +1178,11 @@
 		document.getElementById("security-permission-select-all"),
 		".security-permission-request-select",
 		document.getElementById("security-permission-delete-btn")
+	);
+	initSecurityDeleteToolbar(
+		document.getElementById("security-leave-select-all"),
+		".security-leave-request-select",
+		document.getElementById("security-leave-delete-btn")
 	);
 
 	var permissionGateEndpoint = {{ url_for('security_permission_gate') | tojson }};
