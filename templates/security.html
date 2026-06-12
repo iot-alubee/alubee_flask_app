@@ -619,6 +619,10 @@
 							<th scope="col" class="cell-freeze-action">Action</th>
 							<th scope="col">Department</th>
 							<th scope="col">Shift</th>
+							<th scope="col">Permission Type</th>
+							<th scope="col" class="cell-date">Expected IN</th>
+							<th scope="col" class="cell-date">Expected OUT</th>
+							<th scope="col" class="cell-date">Hours Requested</th>
 							<th scope="col">Reason</th>
 							<th scope="col">PPC Approval</th>
 							<th scope="col">HR Approval</th>
@@ -655,6 +659,10 @@
 							</td>
 							<td class="cell cell-dept">{{ row.department }}</td>
 							<td class="cell">{{ row.permission_shift }}</td>
+							<td class="cell">{{ row.permission_type or '—' }}</td>
+							<td class="cell cell-date">{{ row.permission_expected_in or '—' }}</td>
+							<td class="cell cell-date">{{ row.permission_expected_out or '—' }}</td>
+							<td class="cell cell-date">{{ row.permission_hours_required or '—' }}</td>
 							<td class="cell">{{ row.reason|sentence_case }}</td>
 							<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status|sentence_case }}</td>
 							<td class="cell {{ row.md_status|approval_cell_class }}">{% if row.md_status == 'Offline' %}Offline{% else %}{{ row.md_status|sentence_case }}{% endif %}</td>
@@ -665,7 +673,7 @@
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="{% if can_delete_requests %}12{% else %}11{% endif %}" class="cell text-center text-muted py-5">No CL permission requests for this date.</td>
+							<td colspan="{% if can_delete_requests %}16{% else %}15{% endif %}" class="cell text-center text-muted py-5">No CL permission requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
@@ -688,6 +696,10 @@
 							<th scope="col" class="cell-freeze-action">Action</th>
 							<th scope="col">Department</th>
 							<th scope="col">Shift</th>
+							<th scope="col">Permission Type</th>
+							<th scope="col" class="cell-date">Expected IN</th>
+							<th scope="col" class="cell-date">Expected OUT</th>
+							<th scope="col" class="cell-date">Hours Requested</th>
 							<th scope="col">Reason</th>
 							<th scope="col">JMD Approval</th>
 							<th scope="col">MD Approval</th>
@@ -724,6 +736,10 @@
 							</td>
 							<td class="cell cell-dept">{{ row.department }}</td>
 							<td class="cell">{{ row.permission_shift }}</td>
+							<td class="cell">{{ row.permission_type or '—' }}</td>
+							<td class="cell cell-date">{{ row.permission_expected_in or '—' }}</td>
+							<td class="cell cell-date">{{ row.permission_expected_out or '—' }}</td>
+							<td class="cell cell-date">{{ row.permission_hours_required or '—' }}</td>
 							<td class="cell">{{ row.reason|sentence_case }}</td>
 							<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status|sentence_case }}</td>
 							<td class="cell {{ row.md_status|approval_cell_class }}">{% if row.md_status == 'Offline' %}Offline{% else %}{{ row.md_status|sentence_case }}{% endif %}</td>
@@ -734,7 +750,7 @@
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="{% if can_delete_requests %}12{% else %}11{% endif %}" class="cell text-center text-muted py-5">No employee permission requests for this date.</td>
+							<td colspan="{% if can_delete_requests %}16{% else %}15{% endif %}" class="cell text-center text-muted py-5">No employee permission requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>

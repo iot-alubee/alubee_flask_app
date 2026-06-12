@@ -1792,6 +1792,23 @@ def _leave_overlaps_ist_day(d: dict, ist_day) -> bool:
     return False
 
 
+def _format_leave_days_for_security(d: dict) -> str:
+    if (d.get("leave_duration") or "").strip().lower() == "half":
+        return "Half Day (0.5)"
+    raw = d.get("leave_days")
+    if raw is not None:
+        try:
+            v = float(raw)
+            if v == 0.5:
+                return "Half Day (0.5)"
+            if v == int(v):
+                return str(int(v))
+            return str(v)
+        except (TypeError, ValueError):
+            pass
+    return ""
+
+
 def _leave_approval_statuses_for_display(
     d: dict, *, md_offline: bool = False
 ) -> tuple[str, str]:
@@ -1872,9 +1889,13 @@ def _fetch_security_leave_requests_inner(
     md_offline = _approver_is_offline(db, md_wa)
     rows = []
     for _, d, snap_id in buf:
-        leave_days = d.get("leave_days")
-        if leave_days is None:
-            leave_days = len(d.get("leave_dates") or [])
+        leave_days = _format_leave_days_for_security(d)
+        if not leave_days:
+            raw = d.get("leave_days")
+            if raw is None:
+                leave_days = str(len(d.get("leave_dates") or []))
+            else:
+                leave_days = str(raw)
 
         jmd_display, md_display = _leave_approval_statuses_for_display(
             d, md_offline=md_offline
@@ -2228,6 +2249,9 @@ def _fetch_security_permission_requests_inner(
             "department": d.get("department") or "",
             "reason": d.get("reason") or "",
             "permission_type": d.get("permission_type") or "",
+            "permission_expected_in": (d.get("permission_expected_in") or "").strip(),
+            "permission_expected_out": (d.get("permission_expected_out") or "").strip(),
+            "permission_hours_required": (d.get("permission_hours_required") or "").strip(),
             "permission_shift": _permission_shift_display(user, d),
             "jmd_status": jmd_display,
             "md_status": md_display,
