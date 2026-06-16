@@ -1884,6 +1884,7 @@ def _fetch_security_leave_requests_inner(
         )
         rows.append(
             {
+                "request_id": d.get("request_id") or snap_id,
                 "requested_datetime": _format_firestore_date_ist(
                     d.get("requested_datetime")
                 ),
@@ -2230,6 +2231,8 @@ def _fetch_security_permission_requests_inner(
             "department": d.get("department") or "",
             "reason": d.get("reason") or "",
             "permission_type": d.get("permission_type") or "",
+            "permission_expected_in": (d.get("permission_expected_in") or "").strip(),
+            "permission_expected_out": (d.get("permission_expected_out") or "").strip(),
             "permission_shift": _permission_shift_display(user, d),
             "jmd_status": jmd_display,
             "md_status": md_display,
@@ -4982,8 +4985,36 @@ def _whatsapp_doc_id_from_mobile(mobile: str) -> str:
     raise ValueError("Mobile must be a 10-digit Indian number (or 91 + 10 digits).")
 
 
-def _create_firestore_whatsapp_user(data: dict) -> tuple[bool, str | None]:
-    """Add one employee to Firestore ``users`` for WhatsApp bot access."""
+def _create_firestore_whatsapp_user(data: dict) -> tuple[bool, str | None, bool]:
+    """Save one employee to Firestore ``users`` (upsert by mobile). Returns (ok, error, created)."""
+    ok, err, payload, doc_id = _validate_whatsapp_user_payload(data)
+    if not ok:
+        return False, err, False
+
+    db, err = _get_firestore_client()
+    if err:
+        return False, err, False
+
+    ref = db.collection("users").document(doc_id)
+    created = not ref.get().exists
+    try:
+        ref.set(payload)
+    except Exception as e:
+        app.logger.exception("Firestore save whatsapp user failed employee_id=%s", payload.get("employee_id"))
+        return False, _firestore_user_message(e), False
+
+    action = "added" if created else "updated"
+    app.logger.info(
+        "whatsapp user %s doc_id=%s employee_id=%s by=%s",
+        action,
+        doc_id,
+        payload.get("employee_id"),
+        getattr(current_user, "email", ""),
+    )
+    return True, None, created
+
+
+def _validate_whatsapp_user_payload(data: dict) -> tuple[bool, str | None, dict | None, str | None]:
     employee_id = (data.get("employee_id") or "").strip().upper()
     name = (data.get("name") or "").strip()
     department = (data.get("department") or "").strip()
@@ -4993,26 +5024,26 @@ def _create_firestore_whatsapp_user(data: dict) -> tuple[bool, str | None]:
     is_supervisor = bool(data.get("is_supervisor"))
 
     if not employee_id:
-        return False, "Employee ID is required."
+        return False, "Employee ID is required.", None, None
     if not name:
-        return False, "Name is required."
+        return False, "Name is required.", None, None
     if not department:
-        return False, "Department is required."
+        return False, "Department is required.", None, None
     if jmd_route not in ("JMD1", "JMD2"):
-        return False, "JMD route must be JMD1 or JMD2."
+        return False, "JMD route must be JMD1 or JMD2.", None, None
     if shift_type not in ("GS", "RS"):
-        return False, "Shift type must be GS or RS."
+        return False, "Shift type must be GS or RS.", None, None
 
     digits = _digits_only(mobile_raw)
     if len(digits) == 12 and digits.startswith("91"):
         digits = digits[2:]
     if len(digits) != 10:
-        return False, "Mobile must be a 10-digit Indian number."
+        return False, "Mobile must be a 10-digit Indian number.", None, None
 
     try:
         doc_id = _whatsapp_doc_id_from_mobile(digits)
     except ValueError as e:
-        return False, str(e)
+        return False, str(e), None, None
 
     payload: dict = {
         "employee_id": employee_id,
@@ -5028,7 +5059,7 @@ def _create_firestore_whatsapp_user(data: dict) -> tuple[bool, str | None]:
         shift_login = (data.get("shift_login") or "").strip()
         shift_logout = (data.get("shift_logout") or "").strip()
         if not shift_login or not shift_logout:
-            return False, "GS shift requires login and logout times."
+            return False, "GS shift requires login and logout times.", None, None
         payload["shift_login"] = shift_login
         payload["shift_logout"] = shift_logout
     else:
@@ -5037,7 +5068,7 @@ def _create_firestore_whatsapp_user(data: dict) -> tuple[bool, str | None]:
         s2_in = (data.get("shift2_login") or "").strip()
         s2_out = (data.get("shift2_logout") or "").strip()
         if not s1_in or not s1_out:
-            return False, "RS shift requires shift 1 login and logout times."
+            return False, "RS shift requires shift 1 login and logout times.", None, None
         payload["shift1_login"] = s1_in
         payload["shift1_logout"] = s1_out
         payload["shift2_login"] = s2_in
@@ -5046,24 +5077,75 @@ def _create_firestore_whatsapp_user(data: dict) -> tuple[bool, str | None]:
     if is_supervisor:
         payload["is_supervisor"] = True
 
+    return True, None, payload, doc_id
+
+
+def _normalize_whatsapp_user_mobile(raw: str) -> str:
+    digits = _digits_only(raw or "")
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    return digits if len(digits) == 10 else ""
+
+
+def _whatsapp_user_api_dict(doc_id: str, data: dict) -> dict:
+    d = data or {}
+    return {
+        "doc_id": doc_id,
+        "employee_id": d.get("employee_id") or "",
+        "name": d.get("name") or "",
+        "department": d.get("department") or "",
+        "employee_mobile": d.get("employee_mobile") or _normalize_whatsapp_user_mobile(doc_id),
+        "jmd_route": d.get("jmd_route") or "JMD1",
+        "shift_type": d.get("shift_type") or "GS",
+        "shift_login": d.get("shift_login") or "",
+        "shift_logout": d.get("shift_logout") or "",
+        "shift1_login": d.get("shift1_login") or "",
+        "shift1_logout": d.get("shift1_logout") or "",
+        "shift2_login": d.get("shift2_login") or "",
+        "shift2_logout": d.get("shift2_logout") or "",
+        "is_supervisor": bool(d.get("is_supervisor")),
+    }
+
+
+def _get_firestore_whatsapp_user_by_mobile(mobile: str) -> tuple[dict | None, str | None]:
+    digits = _normalize_whatsapp_user_mobile(mobile)
+    if not digits:
+        return None, "Enter a valid 10-digit mobile number."
+    db, err = _get_firestore_client()
+    if err:
+        return None, err
+    try:
+        doc_id = _whatsapp_doc_id_from_mobile(digits)
+    except ValueError as e:
+        return None, str(e)
+    snap = db.collection("users").document(doc_id).get()
+    if not snap.exists:
+        return None, "No WhatsApp user found for this mobile number."
+    return _whatsapp_user_api_dict(doc_id, snap.to_dict() or {}), None
+
+
+def _delete_firestore_whatsapp_user_by_mobile(mobile: str) -> tuple[bool, str | None]:
+    digits = _normalize_whatsapp_user_mobile(mobile)
+    if not digits:
+        return False, "Enter a valid 10-digit mobile number."
     db, err = _get_firestore_client()
     if err:
         return False, err
-
-    ref = db.collection("users").document(doc_id)
-    if ref.get().exists:
-        return False, "A WhatsApp user with this mobile number already exists."
-
     try:
-        ref.set(payload)
+        doc_id = _whatsapp_doc_id_from_mobile(digits)
+    except ValueError as e:
+        return False, str(e)
+    ref = db.collection("users").document(doc_id)
+    if not ref.get().exists:
+        return False, "No WhatsApp user found for this mobile number."
+    try:
+        ref.delete()
     except Exception as e:
-        app.logger.exception("Firestore add whatsapp user failed employee_id=%s", employee_id)
+        app.logger.exception("Firestore delete whatsapp user failed mobile=%s", digits)
         return False, _firestore_user_message(e)
-
     app.logger.info(
-        "whatsapp user added doc_id=%s employee_id=%s by=%s",
+        "whatsapp user deleted doc_id=%s by=%s",
         doc_id,
-        employee_id,
         getattr(current_user, "email", ""),
     )
     return True, None
@@ -5209,14 +5291,54 @@ def security_visitor_gate():
 @app.route("/security/api/add-whatsapp-user", methods=["POST"])
 @login_required
 def security_add_whatsapp_user():
-    """Admin only: register an employee in Firestore ``users`` for WhatsApp bot access."""
+    """Admin only: save employee in Firestore ``users`` (upsert by mobile)."""
     if not _user_is_admin():
         abort(403)
     payload = request.get_json(silent=True) or {}
-    ok, err = _create_firestore_whatsapp_user(payload)
+    ok, err, created = _create_firestore_whatsapp_user(payload)
     if not ok:
-        return jsonify({"ok": False, "error": err or "Could not add user"}), 400
+        return jsonify({"ok": False, "error": err or "Could not save user"}), 400
+    return jsonify({"ok": True, "created": created, "updated": not created})
+
+
+@app.route("/security/api/whatsapp-user", methods=["GET"])
+@login_required
+def security_lookup_whatsapp_user():
+    """Admin only: load one WhatsApp user by mobile number."""
+    if not _user_is_admin():
+        abort(403)
+    mobile = (request.args.get("mobile") or "").strip()
+    user, err = _get_firestore_whatsapp_user_by_mobile(mobile)
+    if err:
+        return jsonify({"ok": False, "error": err}), 404
+    return jsonify({"ok": True, "user": user})
+
+
+@app.route("/security/api/whatsapp-user", methods=["DELETE"])
+@login_required
+def security_delete_whatsapp_user():
+    """Admin only: remove one WhatsApp user by mobile number."""
+    if not _user_is_admin():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    mobile = (payload.get("employee_mobile") or payload.get("mobile") or "").strip()
+    ok, err = _delete_firestore_whatsapp_user_by_mobile(mobile)
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not delete user"}), 400
     return jsonify({"ok": True})
+
+
+@app.route("/security/api/update-whatsapp-user", methods=["POST"])
+@login_required
+def security_update_whatsapp_user():
+    """Admin only: update existing WhatsApp user (same as add — keyed by mobile)."""
+    if not _user_is_admin():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    ok, err, created = _create_firestore_whatsapp_user(payload)
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not update user"}), 400
+    return jsonify({"ok": True, "created": created, "updated": not created})
 
 
 @app.route("/security/api/delete-request", methods=["POST"])
