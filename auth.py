@@ -10,6 +10,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "instance", "app.db")
 
+# Werkzeug scrypt can fail on some hosts; pbkdf2 is reliable on Cloud Run.
+_PASSWORD_HASH_METHOD = "pbkdf2:sha256"
+
 # Page keys used for viewer permissions (must match route names / active_nav)
 PAGE_KEYS = [
     ("production", "Production"),
@@ -19,6 +22,7 @@ PAGE_KEYS = [
     ("consumables", "Consumables"),
     ("maintenance", "Maintenance"),
     ("documents", "Documents"),
+    ("security", "Security"),
     ("help", "Help"),
 ]
 
@@ -126,7 +130,7 @@ def create_user(email, password, role="viewer"):
     email = email.strip().lower()
     if role not in ("admin", "editor", "viewer"):
         role = "viewer"
-    password_hash = generate_password_hash(password, method="scrypt")
+    password_hash = generate_password_hash(password, method=_PASSWORD_HASH_METHOD)
     conn = get_db()
     try:
         cur = conn.execute(
@@ -242,7 +246,7 @@ def clear_reset_token(token):
 
 
 def set_password(user_id, new_password):
-    password_hash = generate_password_hash(new_password, method="scrypt")
+    password_hash = generate_password_hash(new_password, method=_PASSWORD_HASH_METHOD)
     conn = get_db()
     conn.execute(
         "UPDATE users SET password_hash = ? WHERE id = ?",

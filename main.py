@@ -89,17 +89,21 @@ def _ensure_builtin_security_user(email: str, password: str) -> None:
     existing = auth.get_user_by_email(email)
     if existing is None:
         user_id = auth.create_user(email, password, "viewer")
-        if user_id:
-            auth.set_viewer_pages(user_id, list(_SECURITY_VIEWER_PAGES))
-        return
-    conn = auth.get_db()
-    conn.execute(
-        "UPDATE users SET role = 'viewer' WHERE email = ?",
-        (email,),
-    )
-    conn.commit()
-    conn.close()
-    auth.set_viewer_pages(existing["id"], list(_SECURITY_VIEWER_PAGES))
+        if user_id is None:
+            existing = auth.get_user_by_email(email)
+            user_id = existing["id"] if existing else None
+    else:
+        user_id = existing["id"]
+        auth.set_password(user_id, password)
+        conn = auth.get_db()
+        conn.execute(
+            "UPDATE users SET role = 'viewer' WHERE email = ?",
+            (email,),
+        )
+        conn.commit()
+        conn.close()
+    if user_id:
+        auth.set_viewer_pages(user_id, list(_SECURITY_VIEWER_PAGES))
 
 
 def _ensure_auth_database():
@@ -112,6 +116,7 @@ def _ensure_auth_database():
         if existing is None:
             auth.create_user(admin_email, admin_password, "admin")
         else:
+            auth.set_password(existing["id"], admin_password)
             conn = auth.get_db()
             conn.execute(
                 "UPDATE users SET role = 'admin' WHERE email = ?",

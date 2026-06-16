@@ -26,5 +26,6 @@ htmlcov
 # Local / dev
 .env
 .env.*
+instance/
 *.log
 .DS_Store
