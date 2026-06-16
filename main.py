@@ -71,7 +71,6 @@ login_manager.login_message = "Please log in to access this page."
 
 SECURITY_UNIT_I_EMAIL = "security.1@alubee.com"
 SECURITY_UNIT_II_EMAIL = "security.2@alubee.com"
-HR_EMAIL = "hr@alubee.com"
 
 # Built-in accounts (SQLite). Change passwords after deploy in production.
 _DEFAULT_ADMIN = ("admin@alubee.com", "admin123")
@@ -79,7 +78,6 @@ _DEFAULT_SECURITY_USERS = (
     (SECURITY_UNIT_I_EMAIL, "security@alubee"),
     (SECURITY_UNIT_II_EMAIL, "security@alubee"),
 )
-_DEFAULT_HR_USER = (HR_EMAIL, "hr@alubee")
 _SECURITY_VIEWER_PAGES = ("security",)
 
 
@@ -121,7 +119,6 @@ def _ensure_auth_database():
             conn.close()
         for email, password in _DEFAULT_SECURITY_USERS:
             _ensure_builtin_security_user(email, password)
-        _ensure_builtin_security_user(*_DEFAULT_HR_USER)
     except Exception as e:
         app.logger.exception("Auth database initialization failed: %s", e)
 
@@ -1792,38 +1789,13 @@ def _leave_overlaps_ist_day(d: dict, ist_day) -> bool:
     return False
 
 
-def _format_leave_days_for_security(d: dict) -> str:
-    if (d.get("leave_duration") or "").strip().lower() == "half":
-        return "Half Day (0.5)"
-    raw = d.get("leave_days")
-    if raw is not None:
-        try:
-            v = float(raw)
-            if v == 0.5:
-                return "Half Day (0.5)"
-            if v == int(v):
-                return str(int(v))
-            return str(v)
-        except (TypeError, ValueError):
-            pass
-    return ""
-
-
 def _leave_approval_statuses_for_display(
     d: dict, *, md_offline: bool = False
 ) -> tuple[str, str]:
     """JMD + MD columns for Security leave tab."""
     if d.get("cancelled_by_employee"):
         return "Cancelled", "N/A"
-    jmd_display, md_display = _od_approval_statuses_for_display(
-        d, md_offline=False
-    )
-    md_raw = (d.get("md_status") or "").strip().upper()
-    if md_raw == "PENDING":
-        md_display = "Pending"
-    elif _md_offline_bypass_on_request(d):
-        md_display = "Offline"
-    return jmd_display, md_display
+    return _od_approval_statuses_for_display(d, md_offline=md_offline)
 
 
 def _leave_jmd_display_label(d: dict) -> str:
@@ -1889,20 +1861,22 @@ def _fetch_security_leave_requests_inner(
     md_offline = _approver_is_offline(db, md_wa)
     rows = []
     for _, d, snap_id in buf:
-        leave_days = _format_leave_days_for_security(d)
-        if not leave_days:
-            raw = d.get("leave_days")
-            if raw is None:
-                leave_days = str(len(d.get("leave_dates") or []))
-            else:
-                leave_days = str(raw)
+        leave_days = d.get("leave_days")
+        if leave_days is None:
+            leave_days = len(d.get("leave_dates") or [])
+        leave_duration = (d.get("leave_duration") or "").strip().lower()
+        if leave_duration == "half_day" or leave_days == 0.5:
+            leave_days_display = "0.5"
+        elif leave_days is not None and float(leave_days) == int(float(leave_days)):
+            leave_days_display = int(float(leave_days))
+        else:
+            leave_days_display = leave_days if leave_days is not None else ""
 
         jmd_display, md_display = _leave_approval_statuses_for_display(
             d, md_offline=md_offline
         )
         rows.append(
             {
-                "request_id": d.get("request_id") or snap_id,
                 "requested_datetime": _format_firestore_date_ist(
                     d.get("requested_datetime")
                 ),
@@ -1912,7 +1886,7 @@ def _fetch_security_leave_requests_inner(
                 "reason": d.get("reason") or "",
                 "leave_from_date": d.get("leave_from_date") or "",
                 "leave_to_date": d.get("leave_to_date") or "",
-                "leave_days": leave_days if leave_days is not None else "",
+                "leave_days": leave_days_display,
                 "jmd_status": jmd_display,
                 "md_status": md_display,
             }
@@ -2249,9 +2223,6 @@ def _fetch_security_permission_requests_inner(
             "department": d.get("department") or "",
             "reason": d.get("reason") or "",
             "permission_type": d.get("permission_type") or "",
-            "permission_expected_in": (d.get("permission_expected_in") or "").strip(),
-            "permission_expected_out": (d.get("permission_expected_out") or "").strip(),
-            "permission_hours_required": (d.get("permission_hours_required") or "").strip(),
             "permission_shift": _permission_shift_display(user, d),
             "jmd_status": jmd_display,
             "md_status": md_display,
@@ -4991,6 +4962,106 @@ SECURITY_TABS = (
 )
 
 
+def _digits_only(value: str) -> str:
+    return "".join(c for c in str(value or "").strip() if c.isdigit())
+
+
+def _whatsapp_doc_id_from_mobile(mobile: str) -> str:
+    digits = _digits_only(mobile)
+    if len(digits) == 10:
+        return f"whatsapp:+91{digits}"
+    if len(digits) == 12 and digits.startswith("91"):
+        return f"whatsapp:+{digits}"
+    raise ValueError("Mobile must be a 10-digit Indian number (or 91 + 10 digits).")
+
+
+def _create_firestore_whatsapp_user(data: dict) -> tuple[bool, str | None]:
+    """Add one employee to Firestore ``users`` for WhatsApp bot access."""
+    employee_id = (data.get("employee_id") or "").strip().upper()
+    name = (data.get("name") or "").strip()
+    department = (data.get("department") or "").strip()
+    mobile_raw = (data.get("employee_mobile") or data.get("mobile") or "").strip()
+    jmd_route = (data.get("jmd_route") or "JMD1").strip().upper()
+    shift_type = (data.get("shift_type") or "GS").strip().upper()
+    is_supervisor = bool(data.get("is_supervisor"))
+
+    if not employee_id:
+        return False, "Employee ID is required."
+    if not name:
+        return False, "Name is required."
+    if not department:
+        return False, "Department is required."
+    if jmd_route not in ("JMD1", "JMD2"):
+        return False, "JMD route must be JMD1 or JMD2."
+    if shift_type not in ("GS", "RS"):
+        return False, "Shift type must be GS or RS."
+
+    digits = _digits_only(mobile_raw)
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    if len(digits) != 10:
+        return False, "Mobile must be a 10-digit Indian number."
+
+    try:
+        doc_id = _whatsapp_doc_id_from_mobile(digits)
+    except ValueError as e:
+        return False, str(e)
+
+    payload: dict = {
+        "employee_id": employee_id,
+        "name": name,
+        "department": department,
+        "employee_mobile": digits,
+        "jmd_route": jmd_route,
+        "role": "employee",
+        "shift_type": shift_type,
+    }
+
+    if shift_type == "GS":
+        shift_login = (data.get("shift_login") or "").strip()
+        shift_logout = (data.get("shift_logout") or "").strip()
+        if not shift_login or not shift_logout:
+            return False, "GS shift requires login and logout times."
+        payload["shift_login"] = shift_login
+        payload["shift_logout"] = shift_logout
+    else:
+        s1_in = (data.get("shift1_login") or "").strip()
+        s1_out = (data.get("shift1_logout") or "").strip()
+        s2_in = (data.get("shift2_login") or "").strip()
+        s2_out = (data.get("shift2_logout") or "").strip()
+        if not s1_in or not s1_out:
+            return False, "RS shift requires shift 1 login and logout times."
+        payload["shift1_login"] = s1_in
+        payload["shift1_logout"] = s1_out
+        payload["shift2_login"] = s2_in
+        payload["shift2_logout"] = s2_out
+
+    if is_supervisor:
+        payload["is_supervisor"] = True
+
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+
+    ref = db.collection("users").document(doc_id)
+    if ref.get().exists:
+        return False, "A WhatsApp user with this mobile number already exists."
+
+    try:
+        ref.set(payload)
+    except Exception as e:
+        app.logger.exception("Firestore add whatsapp user failed employee_id=%s", employee_id)
+        return False, _firestore_user_message(e)
+
+    app.logger.info(
+        "whatsapp user added doc_id=%s employee_id=%s by=%s",
+        doc_id,
+        employee_id,
+        getattr(current_user, "email", ""),
+    )
+    return True, None
+
+
 def _delete_firestore_request(request_id: str) -> tuple[bool, str | None]:
     """Permanently remove one document from Firestore ``requests``."""
     rid = (request_id or "").strip()
@@ -5125,6 +5196,19 @@ def security_visitor_gate():
     )
     if not ok:
         return jsonify({"ok": False, "error": err or "Update failed"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/security/api/add-whatsapp-user", methods=["POST"])
+@login_required
+def security_add_whatsapp_user():
+    """Admin only: register an employee in Firestore ``users`` for WhatsApp bot access."""
+    if not _user_is_admin():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    ok, err = _create_firestore_whatsapp_user(payload)
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not add user"}), 400
     return jsonify({"ok": True})
 
 
