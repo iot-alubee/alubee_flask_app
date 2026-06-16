@@ -71,12 +71,14 @@ login_manager.login_message = "Please log in to access this page."
 
 SECURITY_UNIT_I_EMAIL = "security.1@alubee.com"
 SECURITY_UNIT_II_EMAIL = "security.2@alubee.com"
+HR_SECURITY_EMAIL = "hr@alubee.com"
 
 # Built-in accounts (SQLite). Change passwords after deploy in production.
 _DEFAULT_ADMIN = ("admin@alubee.com", "admin123")
 _DEFAULT_SECURITY_USERS = (
     (SECURITY_UNIT_I_EMAIL, "security@alubee"),
     (SECURITY_UNIT_II_EMAIL, "security@alubee"),
+    (HR_SECURITY_EMAIL, "hr@alubee"),
 )
 _SECURITY_VIEWER_PAGES = ("security",)
 
