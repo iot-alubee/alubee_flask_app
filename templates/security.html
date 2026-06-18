@@ -646,7 +646,12 @@
 							<td class="cell cell-visiting">{{ row.description|sentence_case }}</td>
 							<td class="cell">
 								{% if row.issue_photo_url %}
-								<a href="{{ row.issue_photo_url }}" target="_blank" rel="noopener noreferrer">View</a>
+								<button
+									type="button"
+									class="btn btn-link btn-sm p-0 align-baseline it-photo-view-btn"
+									data-photo-url="{{ row.issue_photo_url }}"
+									data-photo-title="{{ row.employee_name }} — {{ row.issue_type_label }}"
+								>View</button>
 								{% else %}
 								—
 								{% endif %}
@@ -1161,6 +1166,23 @@
 				</div>
 			</div>
 		</div>
+
+		<div class="modal fade" id="itIssuePhotoModal" tabindex="-1" aria-labelledby="itIssuePhotoModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title" id="itIssuePhotoModalLabel">Issue photo</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body text-center p-2">
+						<img id="itIssuePhotoImg" src="" alt="Issue photo" class="img-fluid rounded border" style="max-height: 75vh; object-fit: contain;">
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+					</div>
+				</div>
+			</div>
+		</div>
 	</div>
 </div>
 <script>
@@ -1198,6 +1220,30 @@
 	var odoModal = odoModalEl && typeof bootstrap !== "undefined"
 		? bootstrap.Modal.getOrCreateInstance(odoModalEl)
 		: null;
+
+	var itPhotoModalEl = document.getElementById("itIssuePhotoModal");
+	var itPhotoImg = document.getElementById("itIssuePhotoImg");
+	var itPhotoTitle = document.getElementById("itIssuePhotoModalLabel");
+	var itPhotoModal = itPhotoModalEl && typeof bootstrap !== "undefined"
+		? bootstrap.Modal.getOrCreateInstance(itPhotoModalEl)
+		: null;
+
+	document.querySelectorAll(".it-photo-view-btn").forEach(function (btn) {
+		btn.addEventListener("click", function () {
+			var url = (btn.getAttribute("data-photo-url") || "").trim();
+			if (!url || !itPhotoModal) return;
+			if (itPhotoImg) itPhotoImg.src = url;
+			if (itPhotoTitle) {
+				itPhotoTitle.textContent = (btn.getAttribute("data-photo-title") || "").trim() || "Issue photo";
+			}
+			itPhotoModal.show();
+		});
+	});
+	if (itPhotoModalEl) {
+		itPhotoModalEl.addEventListener("hidden.bs.modal", function () {
+			if (itPhotoImg) itPhotoImg.removeAttribute("src");
+		});
+	}
 
 	function showOdoError(msg) {
 		if (!odoError) return;
