@@ -220,6 +220,21 @@ def approval_cell_class(value):
     return "security-appr-pending"
 
 
+@app.template_filter("it_status_cell_class")
+def it_status_cell_class(value):
+    """CSS class for IT ticket status cells."""
+    s = (value or "").strip().upper()
+    if s == "CLOSED":
+        return "security-appr-approved"
+    if s == "CANCELLED":
+        return "security-appr-denied"
+    if s == "ASSIGNED":
+        return "security-appr-pending"
+    if s == "QUEUED":
+        return "security-appr-na"
+    return "security-appr-pending"
+
+
 def _init_bigquery_client():
     """BigQuery client: env path → local JSON next to app → Application Default Credentials.
 
@@ -1928,6 +1943,106 @@ def fetch_security_leave_requests(
         )
     except Exception as e:
         app.logger.exception("Firestore security leave fetch failed")
+        return [], _firestore_user_message(e)
+
+
+def _it_status_label(raw: str) -> str:
+    labels = {
+        "QUEUED": "Queued",
+        "ASSIGNED": "Assigned",
+        "CLOSED": "Closed",
+        "CANCELLED": "Cancelled",
+    }
+    key = (raw or "").strip().upper()
+    return labels.get(key, (raw or "—").strip() or "—")
+
+
+def _fetch_security_it_requests_inner(
+    ist_day,
+    db,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    buf = []
+    for snap in _security_requests_snapshots(db, "IT"):
+        d = snap.to_dict() or {}
+        ts = d.get("requested_datetime")
+        if ist_day is not None:
+            if _requested_datetime_ist_date(ts) != ist_day:
+                continue
+        if jmd_route_filter and _request_jmd_route(d) != jmd_route_filter:
+            continue
+        buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
+
+    buf.sort(key=lambda x: x[0], reverse=True)
+    buf = buf[:200]
+
+    rows = []
+    for _, d, snap_id in buf:
+        desc = (d.get("description") or "").strip()
+        rows.append(
+            {
+                "request_id": d.get("request_id") or snap_id,
+                "requested_datetime": _format_firestore_date_ist(
+                    d.get("requested_datetime")
+                ),
+                "requested_time": _format_firestore_time_ist_12h(
+                    d.get("requested_datetime")
+                ),
+                "employee_id": d.get("employee_id") or "",
+                "employee_name": d.get("employee_name") or "",
+                "department": d.get("department") or "",
+                "it_category_label": d.get("it_category_label")
+                or d.get("it_category")
+                or "",
+                "issue_type_label": d.get("issue_type_label")
+                or d.get("issue_type")
+                or "",
+                "description": desc or "—",
+                "issue_photo_url": (d.get("issue_photo_url") or "").strip(),
+                "priority_label": d.get("priority_label") or d.get("priority") or "",
+                "it_status": _it_status_label(d.get("it_status")),
+                "it_status_raw": (d.get("it_status") or "").strip().upper(),
+                "assigned_engineer_name": d.get("assigned_engineer_name") or "—",
+                "assigned_datetime": _format_firestore_time_ist_12h(
+                    d.get("assigned_datetime")
+                )
+                or "—",
+                "closed_datetime": _format_firestore_time_ist_12h(
+                    d.get("closed_datetime")
+                )
+                or "—",
+            }
+        )
+    return rows
+
+
+def fetch_security_it_requests(
+    ist_day=None,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    """Load IT requests for one IST calendar day (requested_datetime), newest first."""
+    db, err = _get_firestore_client()
+    if err:
+        return [], err
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _fetch_security_it_requests_inner,
+                ist_day,
+                db,
+                jmd_route_filter=jmd_route_filter,
+            )
+            return future.result(timeout=25), None
+    except TimeoutError:
+        app.logger.error("Firestore security IT fetch timed out")
+        return [], (
+            "Firestore request timed out. Check that the Cloud Run service account has "
+            "Cloud Datastore User on whatsapp-approval-system."
+        )
+    except Exception as e:
+        app.logger.exception("Firestore security IT fetch failed")
         return [], _firestore_user_message(e)
 
 
@@ -4968,6 +5083,7 @@ SECURITY_TABS = (
     ("visitor-request", "Visitor Request"),
     ("leave-request", "Leave Request"),
     ("permission-request", "Permission Request"),
+    ("it-request", "IT Request"),
     ("approver-status", "Approver Status"),
 )
 
@@ -5181,6 +5297,7 @@ def security():
     od_requests = []
     visitor_requests = []
     leave_requests = []
+    it_requests = []
     permission_emp_requests = []
     permission_cl_requests = []
     permission_view = (request.args.get("permission_view") or "emp").strip().lower()
@@ -5201,6 +5318,11 @@ def security():
         )
     elif tab == "leave-request":
         leave_requests, firestore_error = fetch_security_leave_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+        )
+    elif tab == "it-request":
+        it_requests, firestore_error = fetch_security_it_requests(
             ist_day=selected_day,
             jmd_route_filter=jmd_route_filter,
         )
@@ -5229,6 +5351,7 @@ def security():
         od_requests=od_requests,
         visitor_requests=visitor_requests,
         leave_requests=leave_requests,
+        it_requests=it_requests,
         permission_emp_requests=permission_emp_requests,
         permission_cl_requests=permission_cl_requests,
         permission_view=permission_view,
