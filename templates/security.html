@@ -166,6 +166,14 @@
 	.security-od-toolbar select[name="unit"] {
 		min-width: 11rem;
 	}
+	.it-photo-view-btn {
+		cursor: pointer;
+		position: relative;
+		z-index: 2;
+	}
+	#itIssuePhotoModal {
+		z-index: 1060;
+	}
 	.security-od-table.security-table-has-select {
 		--security-freeze-select-w: 2.75rem;
 	}
@@ -649,8 +657,10 @@
 								<button
 									type="button"
 									class="btn btn-link btn-sm p-0 align-baseline it-photo-view-btn"
-									data-photo-url="{{ row.issue_photo_url }}"
-									data-photo-title="{{ row.employee_name }} — {{ row.issue_type_label }}"
+									data-bs-toggle="modal"
+									data-bs-target="#itIssuePhotoModal"
+									data-photo-url="{{ row.issue_photo_url | e }}"
+									data-photo-title="{{ (row.employee_name ~ ' — ' ~ row.issue_type_label) | e }}"
 								>View</button>
 								{% else %}
 								—
@@ -1175,7 +1185,10 @@
 						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 					</div>
 					<div class="modal-body text-center p-2">
-						<img id="itIssuePhotoImg" src="" alt="Issue photo" class="img-fluid rounded border" style="max-height: 75vh; object-fit: contain;">
+						<p id="itIssuePhotoError" class="text-danger small mb-2" style="display: none;">Could not load image. Try opening in a new tab.</p>
+						<img id="itIssuePhotoImg" src="" alt="Issue photo" class="img-fluid rounded border" style="max-height: 75vh; object-fit: contain; display: none;">
+						<div id="itIssuePhotoLoading" class="text-muted small py-4" style="display: none;">Loading…</div>
+						<a id="itIssuePhotoOpenTab" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-primary mt-2" style="display: none;">Open in new tab</a>
 					</div>
 					<div class="modal-footer">
 						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
@@ -1185,6 +1198,8 @@
 		</div>
 	</div>
 </div>
+{% endblock %}
+{% block page_scripts %}
 <script>
 (function () {
 	function syncSecurityFreezeColumns() {
@@ -1224,26 +1239,89 @@
 	var itPhotoModalEl = document.getElementById("itIssuePhotoModal");
 	var itPhotoImg = document.getElementById("itIssuePhotoImg");
 	var itPhotoTitle = document.getElementById("itIssuePhotoModalLabel");
-	var itPhotoModal = itPhotoModalEl && typeof bootstrap !== "undefined"
-		? bootstrap.Modal.getOrCreateInstance(itPhotoModalEl)
-		: null;
+	var itPhotoError = document.getElementById("itIssuePhotoError");
+	var itPhotoLoading = document.getElementById("itIssuePhotoLoading");
+	var itPhotoOpenTab = document.getElementById("itIssuePhotoOpenTab");
 
-	document.querySelectorAll(".it-photo-view-btn").forEach(function (btn) {
-		btn.addEventListener("click", function () {
-			var url = (btn.getAttribute("data-photo-url") || "").trim();
-			if (!url || !itPhotoModal) return;
-			if (itPhotoImg) itPhotoImg.src = url;
-			if (itPhotoTitle) {
-				itPhotoTitle.textContent = (btn.getAttribute("data-photo-title") || "").trim() || "Issue photo";
-			}
-			itPhotoModal.show();
-		});
-	});
-	if (itPhotoModalEl) {
-		itPhotoModalEl.addEventListener("hidden.bs.modal", function () {
-			if (itPhotoImg) itPhotoImg.removeAttribute("src");
-		});
+	if (itPhotoModalEl && itPhotoModalEl.parentElement !== document.body) {
+		document.body.appendChild(itPhotoModalEl);
 	}
+
+	function resetItPhotoModal() {
+		if (itPhotoImg) {
+			itPhotoImg.removeAttribute("src");
+			itPhotoImg.style.display = "none";
+		}
+		if (itPhotoError) itPhotoError.style.display = "none";
+		if (itPhotoLoading) itPhotoLoading.style.display = "none";
+		if (itPhotoOpenTab) {
+			itPhotoOpenTab.style.display = "none";
+			itPhotoOpenTab.removeAttribute("href");
+		}
+	}
+
+	function loadItPhotoIntoModal(url, title) {
+		resetItPhotoModal();
+		if (itPhotoTitle) {
+			itPhotoTitle.textContent = title || "Issue photo";
+		}
+		if (itPhotoOpenTab) {
+			itPhotoOpenTab.href = url;
+			itPhotoOpenTab.style.display = "inline-block";
+		}
+		if (itPhotoLoading) itPhotoLoading.style.display = "block";
+		if (itPhotoImg) {
+			itPhotoImg.onload = function () {
+				if (itPhotoLoading) itPhotoLoading.style.display = "none";
+				itPhotoImg.style.display = "block";
+			};
+			itPhotoImg.onerror = function () {
+				if (itPhotoLoading) itPhotoLoading.style.display = "none";
+				itPhotoImg.style.display = "none";
+				if (itPhotoError) itPhotoError.style.display = "block";
+			};
+			itPhotoImg.src = url;
+		}
+	}
+
+	function openItPhotoModal(url, title) {
+		if (!url) return;
+		if (!itPhotoModalEl || typeof bootstrap === "undefined") {
+			window.open(url, "_blank", "noopener,noreferrer");
+			return;
+		}
+		loadItPhotoIntoModal(url, title);
+		bootstrap.Modal.getOrCreateInstance(itPhotoModalEl).show();
+	}
+
+	if (itPhotoModalEl) {
+		itPhotoModalEl.addEventListener("show.bs.modal", function (event) {
+			var trigger = event.relatedTarget;
+			if (!trigger || !trigger.classList.contains("it-photo-view-btn")) return;
+			var url = (trigger.getAttribute("data-photo-url") || "").trim();
+			if (!url) {
+				event.preventDefault();
+				return;
+			}
+			loadItPhotoIntoModal(
+				url,
+				(trigger.getAttribute("data-photo-title") || "").trim()
+			);
+		});
+		itPhotoModalEl.addEventListener("hidden.bs.modal", resetItPhotoModal);
+	}
+
+	document.addEventListener("click", function (e) {
+		var btn = e.target.closest(".it-photo-view-btn");
+		if (!btn) return;
+		var url = (btn.getAttribute("data-photo-url") || "").trim();
+		if (!url) return;
+		if (typeof bootstrap !== "undefined" && btn.getAttribute("data-bs-toggle") === "modal") {
+			return;
+		}
+		e.preventDefault();
+		openItPhotoModal(url, (btn.getAttribute("data-photo-title") || "").trim());
+	}, true);
 
 	function showOdoError(msg) {
 		if (!odoError) return;

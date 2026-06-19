@@ -1018,6 +1018,7 @@
 				<!-- Javascript -->
 				<script src="{{ url_for('static', filename='assets/plugins/popper.min.js') }}"></script>
 				<script src="{{ url_for('static', filename='assets/plugins/bootstrap/js/bootstrap.min.js') }}"></script>
+				{% block page_scripts %}{% endblock %}
 
 				<!-- Charts -->
 				<script src="{{ url_for('static', filename='assets/plugins/chart.js/chart.min.js') }}"></script>
