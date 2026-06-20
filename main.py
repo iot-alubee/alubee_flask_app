@@ -1227,6 +1227,28 @@ def _request_jmd_route(d: dict) -> str:
     return "JMD1"
 
 
+def _vehicle_from_unit_jmd_route(d: dict) -> str:
+    """Vehicle Request From field → Unit I (JMD1) or Unit II (JMD2)."""
+    unit = (d.get("from_unit") or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if unit in ("unit_ii", "unit2", "unit_2", "ii"):
+        return "JMD2"
+    if unit in ("unit_i", "unit1", "unit_1", "i"):
+        return "JMD1"
+    label = (d.get("from_unit_label") or "").strip().upper()
+    if label in ("UNIT II", "UNIT 2"):
+        return "JMD2"
+    if label in ("UNIT I", "UNIT 1"):
+        return "JMD1"
+    return "JMD1"
+
+
+def _vehicle_matches_unit_filter(d: dict, jmd_route_filter: str | None) -> bool:
+    """Vehicle Request tab only — filter by form ``from_unit``, not employee ``jmd_route``."""
+    if not jmd_route_filter:
+        return True
+    return _vehicle_from_unit_jmd_route(d) == jmd_route_filter
+
+
 def _visitor_matches_unit_filter(d: dict, jmd_route_filter: str | None) -> bool:
     """Unit tab filter: destination unit (and BOTH shows on both tabs)."""
     if not jmd_route_filter:
@@ -2071,7 +2093,7 @@ def _fetch_security_vehicle_requests_inner(
         if ist_day is not None:
             if _requested_datetime_ist_date(ts) != ist_day:
                 continue
-        if jmd_route_filter and _request_jmd_route(d) != jmd_route_filter:
+        if jmd_route_filter and not _vehicle_matches_unit_filter(d, jmd_route_filter):
             continue
         status = (
             d.get("vehicle_request_status") or d.get("logistics_status") or ""
@@ -2102,6 +2124,7 @@ def _fetch_security_vehicle_requests_inner(
                 "request_id": d.get("request_id") or snap_id,
                 "employee_name": d.get("employee_name") or "",
                 "department": d.get("department") or "",
+                "from_unit_label": d.get("from_unit_label") or "—",
                 "destination_category_label": d.get("destination_category_label") or "",
                 "destination_label": d.get("destination_label") or "",
                 "assigned_to": d.get("assigned_to") or "—",

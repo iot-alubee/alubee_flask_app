@@ -725,6 +725,7 @@
 					<thead class="table-light">
 						<tr>
 							<th scope="col" class="cell-freeze-emp">Requester</th>
+							<th scope="col">From</th>
 							<th scope="col">Category</th>
 							<th scope="col">Destination</th>
 							<th scope="col">Assignee</th>
@@ -740,6 +741,7 @@
 						{% for row in vehicle_requests %}
 						<tr>
 							<td class="cell cell-freeze-emp">{{ row.employee_name|sentence_case }}</td>
+							<td class="cell">{{ row.from_unit_label|sentence_case }}</td>
 							<td class="cell">{{ row.destination_category_label|sentence_case }}</td>
 							<td class="cell">{{ row.destination_label|sentence_case }}</td>
 							<td class="cell">{{ row.assigned_to|sentence_case }}</td>
@@ -762,7 +764,7 @@
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="9" class="cell text-center text-muted py-5">No vehicle requests for this date.</td>
+							<td colspan="10" class="cell text-center text-muted py-5">No vehicle requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
