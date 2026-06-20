@@ -2046,6 +2046,153 @@ def fetch_security_it_requests(
         return [], _firestore_user_message(e)
 
 
+def _vehicle_status_label(raw: str) -> str:
+    labels = {
+        "PENDING": "Pending",
+        "ASSIGNED": "Assigned",
+        "STARTED": "Started",
+        "COMPLETED": "Completed",
+        "CANCELLED": "Cancelled",
+    }
+    key = (raw or "").strip().upper()
+    return labels.get(key, (raw or "—").strip() or "—")
+
+
+def _fetch_security_vehicle_requests_inner(
+    ist_day,
+    db,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    buf = []
+    for snap in _security_requests_snapshots(db, "VEHICLE_REQUEST"):
+        d = snap.to_dict() or {}
+        ts = d.get("requested_datetime")
+        if ist_day is not None:
+            if _requested_datetime_ist_date(ts) != ist_day:
+                continue
+        if jmd_route_filter and _request_jmd_route(d) != jmd_route_filter:
+            continue
+        status = (
+            d.get("vehicle_request_status") or d.get("logistics_status") or ""
+        ).strip().upper()
+        if status == "CANCELLED":
+            continue
+        buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
+
+    buf.sort(key=lambda x: x[0], reverse=True)
+    buf = buf[:200]
+
+    rows = []
+    for _, d, snap_id in buf:
+        status_raw = (
+            d.get("vehicle_request_status") or d.get("logistics_status") or ""
+        ).strip().upper()
+        active = bool(d.get("is_active_trip"))
+        out_at = d.get("security_out_at")
+        in_at = d.get("security_in_at")
+        show_out = (
+            status_raw == "STARTED"
+            and active
+            and out_at is None
+        )
+        show_in = active and out_at is not None and in_at is None
+        rows.append(
+            {
+                "request_id": d.get("request_id") or snap_id,
+                "employee_name": d.get("employee_name") or "",
+                "department": d.get("department") or "",
+                "destination_category_label": d.get("destination_category_label") or "",
+                "destination_label": d.get("destination_label") or "",
+                "assigned_to": d.get("assigned_to") or "—",
+                "required_at": d.get("required_at") or "—",
+                "vehicle_status": _vehicle_status_label(status_raw),
+                "vehicle_status_raw": status_raw,
+                "security_out_at": _format_firestore_time_ist_12h(out_at),
+                "security_in_at": _format_firestore_time_ist_12h(in_at),
+                "show_out": show_out,
+                "show_in": show_in,
+                "trip_closed": in_at is not None,
+            }
+        )
+    return rows
+
+
+def fetch_security_vehicle_requests(
+    ist_day=None,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    db, err = _get_firestore_client()
+    if err:
+        return [], err
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _fetch_security_vehicle_requests_inner,
+                ist_day,
+                db,
+                jmd_route_filter=jmd_route_filter,
+            )
+            return future.result(timeout=25), None
+    except TimeoutError:
+        app.logger.error("Firestore security vehicle fetch timed out")
+        return [], (
+            "Firestore request timed out. Check that the Cloud Run service account has "
+            "Cloud Datastore User on whatsapp-approval-system."
+        )
+    except Exception as e:
+        app.logger.exception("Firestore security vehicle fetch failed")
+        return [], _firestore_user_message(e)
+
+
+def _security_record_vehicle_gate(request_id: str, action: str):
+    """Record OUT / IN for started vehicle requests (active trip only)."""
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    action = (action or "").strip().lower()
+    if action not in ("out", "in"):
+        return False, "Invalid action"
+    rid = (request_id or "").strip()
+    if not rid:
+        return False, "Missing request id"
+    try:
+        ref = db.collection("requests").document(rid)
+        snap = ref.get()
+        if not snap.exists:
+            return False, "Request not found"
+        d = snap.to_dict() or {}
+        if (d.get("type") or "").strip().upper() not in ("VEHICLE_REQUEST", "LOGISTICS"):
+            return False, "Not a vehicle request"
+        status = (
+            d.get("vehicle_request_status") or d.get("logistics_status") or ""
+        ).strip().upper()
+        if status != "STARTED" or not d.get("is_active_trip"):
+            return False, "Trip has not been started by assignee"
+        out_at = d.get("security_out_at")
+        in_at = d.get("security_in_at")
+        now = datetime.now(timezone.utc)
+        if action == "out":
+            if out_at is not None:
+                return False, "Out time is already recorded"
+            ref.update({"security_out_at": now})
+            return True, None
+        if in_at is not None:
+            return False, "This trip is already closed"
+        if out_at is None:
+            return False, "Record OUT before IN"
+        ref.update({
+            "security_in_at": now,
+            "is_active_trip": False,
+            "vehicle_request_status": "COMPLETED",
+        })
+        return True, None
+    except Exception as e:
+        app.logger.exception("security vehicle gate update failed")
+        return False, str(e)
+
+
 def _parse_permission_ddmmy(raw: str):
     s = (raw or "").strip()
     if not s:
@@ -5083,6 +5230,7 @@ SECURITY_TABS = (
     ("visitor-request", "Visitor Request"),
     ("leave-request", "Leave Request"),
     ("permission-request", "Permission Request"),
+    ("vehicle-request", "Vehicle Request"),
     ("it-request", "IT Request"),
     ("approver-status", "Approver Status"),
 )
@@ -5298,6 +5446,7 @@ def security():
     visitor_requests = []
     leave_requests = []
     it_requests = []
+    vehicle_requests = []
     permission_emp_requests = []
     permission_cl_requests = []
     permission_view = (request.args.get("permission_view") or "emp").strip().lower()
@@ -5318,6 +5467,11 @@ def security():
         )
     elif tab == "leave-request":
         leave_requests, firestore_error = fetch_security_leave_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+        )
+    elif tab == "vehicle-request":
+        vehicle_requests, firestore_error = fetch_security_vehicle_requests(
             ist_day=selected_day,
             jmd_route_filter=jmd_route_filter,
         )
@@ -5352,6 +5506,7 @@ def security():
         visitor_requests=visitor_requests,
         leave_requests=leave_requests,
         it_requests=it_requests,
+        vehicle_requests=vehicle_requests,
         permission_emp_requests=permission_emp_requests,
         permission_cl_requests=permission_cl_requests,
         permission_view=permission_view,
@@ -5388,6 +5543,20 @@ def security_permission_gate():
     request_id = (payload.get("request_id") or "").strip()
     action = (payload.get("action") or "").strip()
     ok, err = _security_record_permission_gate(request_id, action)
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Update failed"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/security/api/vehicle-gate", methods=["POST"])
+@login_required
+def security_vehicle_gate():
+    if not _user_can_access_security():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    request_id = (payload.get("request_id") or "").strip()
+    action = (payload.get("action") or "").strip()
+    ok, err = _security_record_vehicle_gate(request_id, action)
     if not ok:
         return jsonify({"ok": False, "error": err or "Update failed"}), 400
     return jsonify({"ok": True})

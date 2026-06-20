@@ -685,6 +685,93 @@
 	</div>
 	{% endif %}
 
+	{% if selected_tab == 'vehicle-request' %}
+	<div class="app-card app-card-settings security-od-card">
+		<div class="app-card-body p-3 security-od-toolbar">
+			<form method="get" action="{{ url_for('security') }}" class="d-flex flex-wrap align-items-end gap-3">
+				<input type="hidden" name="tab" value="vehicle-request">
+				<div>
+					<label for="security-vehicle-date" class="form-label small mb-1">Date (IST)</label>
+					<input id="security-vehicle-date" type="date" name="date" class="form-control form-control-sm" value="{{ selected_date_iso }}">
+				</div>
+				<div>
+					<label for="security-vehicle-unit" class="form-label small mb-1">Unit</label>
+					{% if unit_filter_locked %}
+					<input type="hidden" name="unit" value="{{ selected_unit }}">
+					<input
+						id="security-vehicle-unit"
+						type="text"
+						class="form-control form-control-sm bg-light"
+						value="{% if selected_unit == 'unit-ii' %}Unit II{% else %}Unit I{% endif %}"
+						readonly
+						aria-readonly="true"
+					>
+					{% else %}
+					<select id="security-vehicle-unit" name="unit" class="form-select form-select-sm">
+						<option value="unit-i" {% if selected_unit == 'unit-i' %}selected{% endif %}>Unit I</option>
+						<option value="unit-ii" {% if selected_unit == 'unit-ii' %}selected{% endif %}>Unit II</option>
+					</select>
+					{% endif %}
+				</div>
+				<div class="d-flex gap-2 align-items-center ms-auto">
+					<button type="submit" class="btn btn-sm btn-primary px-3">Refresh</button>
+				</div>
+			</form>
+		</div>
+
+		<div class="app-card-body p-0 p-md-0">
+			<div class="table-responsive security-od-scroll">
+				<table class="table table-hover security-od-table mb-0">
+					<thead class="table-light">
+						<tr>
+							<th scope="col" class="cell-freeze-emp">Requester</th>
+							<th scope="col">Category</th>
+							<th scope="col">Destination</th>
+							<th scope="col">Assignee</th>
+							<th scope="col">Required At</th>
+							<th scope="col">Status</th>
+							<th scope="col" class="cell-freeze-action">Action</th>
+							<th scope="col" class="cell-date">Out</th>
+							<th scope="col" class="cell-date">In</th>
+						</tr>
+					</thead>
+					<tbody>
+						{% if vehicle_requests %}
+						{% for row in vehicle_requests %}
+						<tr>
+							<td class="cell cell-freeze-emp">{{ row.employee_name|sentence_case }}</td>
+							<td class="cell">{{ row.destination_category_label|sentence_case }}</td>
+							<td class="cell">{{ row.destination_label|sentence_case }}</td>
+							<td class="cell">{{ row.assigned_to|sentence_case }}</td>
+							<td class="cell cell-date">{{ row.required_at }}</td>
+							<td class="cell">{{ row.vehicle_status }}</td>
+							<td class="cell cell-freeze-action">
+								{% if row.trip_closed %}
+								<button type="button" class="btn btn-sm btn-secondary" disabled>Closed</button>
+								{% elif row.show_in %}
+								<button type="button" class="btn btn-sm btn-success vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="in">IN</button>
+								{% elif row.show_out %}
+								<button type="button" class="btn btn-sm btn-primary vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="out">OUT</button>
+								{% else %}
+								<span class="text-muted small">—</span>
+								{% endif %}
+							</td>
+							<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
+							<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
+						</tr>
+						{% endfor %}
+						{% else %}
+						<tr>
+							<td colspan="9" class="cell text-center text-muted py-5">No vehicle requests for this date.</td>
+						</tr>
+						{% endif %}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+	{% endif %}
+
 	{% if selected_tab == 'permission-request' %}
 	<div class="app-card app-card-settings security-od-card">
 		<div class="app-card-body p-3 security-od-toolbar">
@@ -1671,6 +1758,42 @@
 			if (!requestId || !action) return;
 			btn.disabled = true;
 			postPermissionGate(requestId, action, function (msg) {
+				alert(msg);
+				btn.disabled = false;
+			});
+		});
+	});
+
+	var vehicleGateEndpoint = {{ url_for('security_vehicle_gate') | tojson }};
+
+	function postVehicleGate(requestId, action, onError) {
+		return fetch(vehicleGateEndpoint, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ request_id: requestId, action: action }),
+		})
+			.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+			.then(function (x) {
+				if (!x.ok || !x.j.ok) {
+					if (onError) onError((x.j && x.j.error) || "Could not save.");
+					return false;
+				}
+				window.location.reload();
+				return true;
+			})
+			.catch(function () {
+				if (onError) onError("Network error.");
+				return false;
+			});
+	}
+
+	document.querySelectorAll(".vehicle-gate-btn").forEach(function (btn) {
+		btn.addEventListener("click", function () {
+			var requestId = this.getAttribute("data-request-id");
+			var action = this.getAttribute("data-action");
+			if (!requestId || !action) return;
+			btn.disabled = true;
+			postVehicleGate(requestId, action, function (msg) {
 				alert(msg);
 				btn.disabled = false;
 			});
