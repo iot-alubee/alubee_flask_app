@@ -1,4 +1,4 @@
-{% extends "index.html" %}
+﻿{% extends "index.html" %}
 
 {% block content %}
 <style>
@@ -210,27 +210,19 @@
 <div class="app-content pt-3 p-md-3 p-lg-4">
 	<div class="container-xl">
 		<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+			{% if security_tabs|length > 1 %}
 			<ul class="nav nav-tabs mb-0" id="securityTabs" role="tablist">
 				{% for tab_key, tab_label in security_tabs %}
 				<li class="nav-item" role="presentation">
 					<a
 						class="nav-link {% if selected_tab == tab_key %}active{% endif %}"
-						href="{{ url_for('security', tab=tab_key, date=selected_date_iso, unit=selected_unit) }}"
+						href="{{ url_for(section_endpoint, tab=tab_key, date=selected_date_iso, unit=selected_unit) }}"
 						role="tab"
 						aria-selected="{% if selected_tab == tab_key %}true{% else %}false{% endif %}"
 					>{{ tab_label }}</a>
 				</li>
 				{% endfor %}
 			</ul>
-			{% if is_admin %}
-			<div class="d-flex gap-2">
-				<button type="button" class="btn btn-sm btn-primary px-3" id="security-add-wa-user-btn" data-bs-toggle="modal" data-bs-target="#addWaUserModal">
-					Add user
-				</button>
-				<button type="button" class="btn btn-sm btn-outline-primary px-3" id="security-manage-wa-user-btn" data-bs-toggle="modal" data-bs-target="#manageWaUserModal">
-					Manage user
-				</button>
-			</div>
 			{% endif %}
 		</div>
 
@@ -243,7 +235,7 @@
 		{% if selected_tab == 'on-duty' %}
 		<div class="app-card app-card-settings security-od-card">
 			<div class="app-card-body p-3 security-od-toolbar">
-				<form method="get" action="{{ url_for('security') }}" class="d-flex flex-wrap align-items-end gap-3">
+				<form method="get" action="{{ url_for(section_endpoint) }}" class="d-flex flex-wrap align-items-end gap-3">
 					<input type="hidden" name="tab" value="{{ selected_tab }}">
 					<div>
 						<label for="security-od-date" class="form-label small mb-1">Date (IST)</label>
@@ -356,7 +348,7 @@
 		{% if selected_tab == 'visitor-request' %}
 		<div class="app-card app-card-settings security-od-card">
 			<div class="app-card-body p-3 security-od-toolbar">
-				<form method="get" action="{{ url_for('security') }}" class="d-flex flex-wrap align-items-end gap-3">
+				<form method="get" action="{{ url_for(section_endpoint) }}" class="d-flex flex-wrap align-items-end gap-3">
 					<input type="hidden" name="tab" value="visitor-request">
 					<div>
 						<label for="security-visitor-date" class="form-label small mb-1">Coming on (IST)</label>
@@ -473,7 +465,7 @@
 	{% if selected_tab == 'leave-request' %}
 	<div class="app-card app-card-settings security-od-card">
 		<div class="app-card-body p-3 security-od-toolbar">
-			<form method="get" action="{{ url_for('security') }}" class="d-flex flex-wrap align-items-end gap-3">
+			<form method="get" action="{{ url_for(section_endpoint) }}" class="d-flex flex-wrap align-items-end gap-3">
 				<input type="hidden" name="tab" value="leave-request">
 				<div>
 					<label for="security-leave-date" class="form-label small mb-1">Date (IST)</label>
@@ -500,6 +492,7 @@
 				</div>
 				<div class="d-flex gap-2 align-items-center ms-auto">
 					<button type="submit" class="btn btn-sm btn-primary px-3">Refresh</button>
+					<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="security-leave-refresh-today" title="Load today (IST)">Today</button>
 					{% if can_delete_requests %}
 					<button type="button" class="btn btn-sm btn-outline-danger px-2" id="security-leave-delete-btn" disabled title="Delete selected requests" aria-label="Delete selected requests">
 						<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trash" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -570,7 +563,7 @@
 	{% if selected_tab == 'it-request' %}
 	<div class="app-card app-card-settings security-od-card">
 		<div class="app-card-body p-3 security-od-toolbar">
-			<form method="get" action="{{ url_for('security') }}" class="d-flex flex-wrap align-items-end gap-3">
+			<form method="get" action="{{ url_for(section_endpoint) }}" class="d-flex flex-wrap align-items-end gap-3">
 				<input type="hidden" name="tab" value="it-request">
 				<div>
 					<label for="security-it-date" class="form-label small mb-1">Date (IST)</label>
@@ -597,6 +590,7 @@
 				</div>
 				<div class="d-flex gap-2 align-items-center ms-auto">
 					<button type="submit" class="btn btn-sm btn-primary px-3">Refresh</button>
+					<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="security-it-refresh-today" title="Load today (IST)">Today</button>
 					{% if can_delete_requests %}
 					<button type="button" class="btn btn-sm btn-outline-danger px-2" id="security-it-delete-btn" disabled title="Delete selected requests" aria-label="Delete selected requests">
 						<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trash" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -688,7 +682,7 @@
 	{% if selected_tab == 'vehicle-request' %}
 	<div class="app-card app-card-settings security-od-card">
 		<div class="app-card-body p-3 security-od-toolbar">
-			<form method="get" action="{{ url_for('security') }}" class="d-flex flex-wrap align-items-end gap-3">
+			<form method="get" action="{{ url_for(section_endpoint) }}" class="d-flex flex-wrap align-items-end gap-3">
 				<input type="hidden" name="tab" value="vehicle-request">
 				<div>
 					<label for="security-vehicle-date" class="form-label small mb-1">Date (IST)</label>
@@ -715,15 +709,29 @@
 				</div>
 				<div class="d-flex gap-2 align-items-center ms-auto">
 					<button type="submit" class="btn btn-sm btn-primary px-3">Refresh</button>
+					<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="security-vehicle-refresh-today" title="Load today (IST)">Today</button>
+					{% if can_delete_requests %}
+					<button type="button" class="btn btn-sm btn-outline-danger px-2" id="security-vehicle-delete-btn" disabled title="Delete selected requests" aria-label="Delete selected requests">
+						<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trash" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+							<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0A.5.5 0 0 1 9 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+							<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+						</svg>
+					</button>
+					{% endif %}
 				</div>
 			</form>
 		</div>
 
 		<div class="app-card-body p-0 p-md-0">
 			<div class="table-responsive security-od-scroll">
-				<table class="table table-hover security-od-table mb-0">
+				<table class="table table-hover security-od-table mb-0{% if can_delete_requests %} security-table-has-select{% endif %}">
 					<thead class="table-light">
 						<tr>
+							{% if can_delete_requests %}
+							<th scope="col" class="cell-freeze-select">
+								<input type="checkbox" class="form-check-input security-select-all" id="security-vehicle-select-all" title="Select all" aria-label="Select all requests">
+							</th>
+							{% endif %}
 							<th scope="col" class="cell-freeze-emp">Requester</th>
 							<th scope="col">From</th>
 							<th scope="col">Category</th>
@@ -740,6 +748,11 @@
 						{% if vehicle_requests %}
 						{% for row in vehicle_requests %}
 						<tr>
+							{% if can_delete_requests %}
+							<td class="cell cell-freeze-select">
+								<input type="checkbox" class="form-check-input security-request-select security-vehicle-request-select" value="{{ row.request_id }}" aria-label="Select request">
+							</td>
+							{% endif %}
 							<td class="cell cell-freeze-emp">{{ row.employee_name|sentence_case }}</td>
 							<td class="cell">{{ row.from_unit_label|sentence_case }}</td>
 							<td class="cell">{{ row.destination_category_label|sentence_case }}</td>
@@ -764,7 +777,7 @@
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="10" class="cell text-center text-muted py-5">No vehicle requests for this date.</td>
+							<td colspan="{% if can_delete_requests %}11{% else %}10{% endif %}" class="cell text-center text-muted py-5">No vehicle requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
@@ -777,7 +790,7 @@
 	{% if selected_tab == 'permission-request' %}
 	<div class="app-card app-card-settings security-od-card">
 		<div class="app-card-body p-3 security-od-toolbar">
-			<form method="get" action="{{ url_for('security') }}" class="d-flex flex-wrap align-items-end gap-3">
+			<form method="get" action="{{ url_for(section_endpoint) }}" class="d-flex flex-wrap align-items-end gap-3">
 				<input type="hidden" name="tab" value="permission-request">
 				<input type="hidden" name="permission_view" value="{{ permission_view }}">
 				<div>
@@ -808,11 +821,11 @@
 					<div class="btn-group btn-group-sm" role="group" aria-label="Permission view">
 						<a
 							class="btn {% if permission_view == 'emp' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-							href="{{ url_for('security', tab='permission-request', permission_view='emp', date=selected_date_iso, unit=selected_unit) }}"
+							href="{{ url_for(section_endpoint, tab='permission-request', permission_view='emp', date=selected_date_iso, unit=selected_unit) }}"
 						>EMP</a>
 						<a
 							class="btn {% if permission_view == 'cl' %}btn-primary{% else %}btn-outline-primary{% endif %}"
-							href="{{ url_for('security', tab='permission-request', permission_view='cl', date=selected_date_iso, unit=selected_unit) }}"
+							href="{{ url_for(section_endpoint, tab='permission-request', permission_view='cl', date=selected_date_iso, unit=selected_unit) }}"
 						>CL</a>
 					</div>
 				</div>
@@ -993,7 +1006,7 @@
 						<div class="small text-muted">Default is Online until someone sends Hi and sets Offline.</div>
 					</div>
 					<div class="d-flex gap-2 align-items-center ms-auto">
-						<a class="btn btn-sm btn-primary px-3" href="{{ url_for('security', tab='approver-status', date=selected_date_iso, unit=selected_unit) }}">Refresh</a>
+						<a class="btn btn-sm btn-primary px-3" href="{{ url_for(section_endpoint, tab='approver-status', date=selected_date_iso, unit=selected_unit) }}">Refresh</a>
 					</div>
 				</div>
 			</div>
@@ -1032,197 +1045,6 @@
 		</div>
 		{% endif %}
 
-		{% if is_admin %}
-		<div class="modal fade" id="addWaUserModal" tabindex="-1" aria-labelledby="addWaUserModalLabel" aria-hidden="true">
-			<div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
-				<div class="modal-content">
-					<div class="modal-header">
-						<h5 class="modal-title" id="addWaUserModalLabel">Add WhatsApp user</h5>
-						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-					</div>
-					<div class="modal-body">
-						<p class="text-muted small mb-3">Register or update by mobile number. If the mobile already exists, details are updated.</p>
-						<div class="invalid-feedback d-block mb-2" id="add-wa-user-error" style="display: none;"></div>
-						<div class="row g-3">
-							<div class="col-12 col-md-6">
-								<label for="wa-user-employee-id" class="form-label">Employee ID</label>
-								<input type="text" class="form-control" id="wa-user-employee-id" placeholder="e.g. SRI018" autocomplete="off" required>
-							</div>
-							<div class="col-12 col-md-6">
-								<label for="wa-user-name" class="form-label">Name</label>
-								<input type="text" class="form-control" id="wa-user-name" placeholder="Full name" autocomplete="off" required>
-							</div>
-							<div class="col-12 col-md-6">
-								<label for="wa-user-department" class="form-label">Department</label>
-								<input type="text" class="form-control" id="wa-user-department" placeholder="e.g. PPC" autocomplete="off" required>
-							</div>
-							<div class="col-12 col-md-6">
-								<label for="wa-user-mobile" class="form-label">Mobile (10 digits)</label>
-								<input type="tel" class="form-control" id="wa-user-mobile" inputmode="numeric" maxlength="12" placeholder="9876543210" autocomplete="off" required>
-							</div>
-							<div class="col-12 col-md-6">
-								<label for="wa-user-jmd-route" class="form-label">JMD route</label>
-								<select class="form-select" id="wa-user-jmd-route">
-									<option value="JMD1" selected>Unit I (JMD1)</option>
-									<option value="JMD2">Unit II (JMD2)</option>
-								</select>
-							</div>
-							<div class="col-12 col-md-6">
-								<label for="wa-user-shift-type" class="form-label">Shift type</label>
-								<select class="form-select" id="wa-user-shift-type">
-									<option value="GS" selected>GS (General shift)</option>
-									<option value="RS">RS (Rotating shift)</option>
-								</select>
-							</div>
-							<div class="col-12" id="wa-user-shift-gs-wrap">
-								<div class="row g-3">
-									<div class="col-12 col-md-6">
-										<label for="wa-user-shift-login" class="form-label">Shift login</label>
-										<input type="time" class="form-control" id="wa-user-shift-login" value="08:30">
-									</div>
-									<div class="col-12 col-md-6">
-										<label for="wa-user-shift-logout" class="form-label">Shift logout</label>
-										<input type="time" class="form-control" id="wa-user-shift-logout" value="20:00">
-									</div>
-								</div>
-							</div>
-							<div class="col-12" id="wa-user-shift-rs-wrap" style="display: none;">
-								<div class="row g-3">
-									<div class="col-12 col-md-6">
-										<label for="wa-user-shift1-login" class="form-label">Shift 1 login</label>
-										<input type="time" class="form-control" id="wa-user-shift1-login" value="08:00">
-									</div>
-									<div class="col-12 col-md-6">
-										<label for="wa-user-shift1-logout" class="form-label">Shift 1 logout</label>
-										<input type="time" class="form-control" id="wa-user-shift1-logout" value="20:00">
-									</div>
-									<div class="col-12 col-md-6">
-										<label for="wa-user-shift2-login" class="form-label">Shift 2 login</label>
-										<input type="time" class="form-control" id="wa-user-shift2-login" value="20:00">
-									</div>
-									<div class="col-12 col-md-6">
-										<label for="wa-user-shift2-logout" class="form-label">Shift 2 logout</label>
-										<input type="time" class="form-control" id="wa-user-shift2-logout" value="08:00">
-									</div>
-								</div>
-							</div>
-							<div class="col-12">
-								<div class="form-check">
-									<input class="form-check-input" type="checkbox" id="wa-user-is-supervisor">
-									<label class="form-check-label" for="wa-user-is-supervisor">Supervisor</label>
-								</div>
-							</div>
-						</div>
-					</div>
-					<div class="modal-footer">
-						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-						<button type="button" class="btn btn-primary" id="add-wa-user-submit">Save user</button>
-					</div>
-				</div>
-			</div>
-		</div>
-
-		<div class="modal fade" id="manageWaUserModal" tabindex="-1" aria-labelledby="manageWaUserModalLabel" aria-hidden="true">
-			<div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
-				<div class="modal-content">
-					<div class="modal-header">
-						<h5 class="modal-title" id="manageWaUserModalLabel">Manage WhatsApp user</h5>
-						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-					</div>
-					<div class="modal-body">
-						<p class="text-muted small mb-3">Search by mobile number to view, update, or delete a WhatsApp user.</p>
-						<div class="invalid-feedback d-block mb-2" id="manage-wa-user-error" style="display: none;"></div>
-						<div class="row g-2 align-items-end mb-3">
-							<div class="col-12 col-md-8">
-								<label for="manage-wa-user-search-mobile" class="form-label">Mobile (10 digits)</label>
-								<input type="tel" class="form-control" id="manage-wa-user-search-mobile" inputmode="numeric" maxlength="12" placeholder="9876543210" autocomplete="off">
-							</div>
-							<div class="col-12 col-md-4">
-								<button type="button" class="btn btn-primary w-100" id="manage-wa-user-search-btn">Search</button>
-							</div>
-						</div>
-						<div id="manage-wa-user-form-wrap" style="display: none;">
-							<div class="row g-3">
-								<div class="col-12 col-md-6">
-									<label for="manage-wa-user-employee-id" class="form-label">Employee ID</label>
-									<input type="text" class="form-control" id="manage-wa-user-employee-id" autocomplete="off">
-								</div>
-								<div class="col-12 col-md-6">
-									<label for="manage-wa-user-name" class="form-label">Name</label>
-									<input type="text" class="form-control" id="manage-wa-user-name" autocomplete="off">
-								</div>
-								<div class="col-12 col-md-6">
-									<label for="manage-wa-user-department" class="form-label">Department</label>
-									<input type="text" class="form-control" id="manage-wa-user-department" autocomplete="off">
-								</div>
-								<div class="col-12 col-md-6">
-									<label for="manage-wa-user-mobile" class="form-label">Mobile (10 digits)</label>
-									<input type="tel" class="form-control" id="manage-wa-user-mobile" inputmode="numeric" maxlength="12" readonly>
-								</div>
-								<div class="col-12 col-md-6">
-									<label for="manage-wa-user-jmd-route" class="form-label">JMD route</label>
-									<select class="form-select" id="manage-wa-user-jmd-route">
-										<option value="JMD1">Unit I (JMD1)</option>
-										<option value="JMD2">Unit II (JMD2)</option>
-									</select>
-								</div>
-								<div class="col-12 col-md-6">
-									<label for="manage-wa-user-shift-type" class="form-label">Shift type</label>
-									<select class="form-select" id="manage-wa-user-shift-type">
-										<option value="GS">GS (General shift)</option>
-										<option value="RS">RS (Rotating shift)</option>
-									</select>
-								</div>
-								<div class="col-12" id="manage-wa-user-shift-gs-wrap">
-									<div class="row g-3">
-										<div class="col-12 col-md-6">
-											<label for="manage-wa-user-shift-login" class="form-label">Shift login</label>
-											<input type="time" class="form-control" id="manage-wa-user-shift-login">
-										</div>
-										<div class="col-12 col-md-6">
-											<label for="manage-wa-user-shift-logout" class="form-label">Shift logout</label>
-											<input type="time" class="form-control" id="manage-wa-user-shift-logout">
-										</div>
-									</div>
-								</div>
-								<div class="col-12" id="manage-wa-user-shift-rs-wrap" style="display: none;">
-									<div class="row g-3">
-										<div class="col-12 col-md-6">
-											<label for="manage-wa-user-shift1-login" class="form-label">Shift 1 login</label>
-											<input type="time" class="form-control" id="manage-wa-user-shift1-login">
-										</div>
-										<div class="col-12 col-md-6">
-											<label for="manage-wa-user-shift1-logout" class="form-label">Shift 1 logout</label>
-											<input type="time" class="form-control" id="manage-wa-user-shift1-logout">
-										</div>
-										<div class="col-12 col-md-6">
-											<label for="manage-wa-user-shift2-login" class="form-label">Shift 2 login</label>
-											<input type="time" class="form-control" id="manage-wa-user-shift2-login">
-										</div>
-										<div class="col-12 col-md-6">
-											<label for="manage-wa-user-shift2-logout" class="form-label">Shift 2 logout</label>
-											<input type="time" class="form-control" id="manage-wa-user-shift2-logout">
-										</div>
-									</div>
-								</div>
-								<div class="col-12">
-									<div class="form-check">
-										<input class="form-check-input" type="checkbox" id="manage-wa-user-is-supervisor">
-										<label class="form-check-label" for="manage-wa-user-is-supervisor">Supervisor</label>
-									</div>
-								</div>
-							</div>
-						</div>
-					</div>
-					<div class="modal-footer">
-						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-						<button type="button" class="btn btn-outline-danger" id="manage-wa-user-delete-btn" disabled>Delete user</button>
-						<button type="button" class="btn btn-primary" id="manage-wa-user-update-btn" disabled>Update user</button>
-					</div>
-				</div>
-			</div>
-		</div>
-		{% endif %}
 
 		<div class="modal fade" id="visitorOtpModal" tabindex="-1" aria-labelledby="visitorOtpModalLabel" aria-hidden="true">
 			<div class="modal-dialog modal-dialog-centered">
@@ -1308,11 +1130,32 @@
 
 	var endpoint = {{ url_for('security_od_gate') | tojson }};
 	var deleteRequestEndpoint = {{ url_for('security_delete_request') | tojson }};
-	var securityTodayUrl = {{ url_for('security', tab=selected_tab, unit=selected_unit) | tojson }};
+	var securityTodayUrl = {{ url_for(section_endpoint, tab=selected_tab, unit=selected_unit) | tojson }};
+	var leaveTodayUrl = {{ url_for(section_endpoint, tab='leave-request', unit=selected_unit) | tojson }};
+	var itTodayUrl = {{ url_for(section_endpoint, tab='it-request', unit=selected_unit) | tojson }};
+	var vehicleTodayUrl = {{ url_for(section_endpoint, tab='vehicle-request', unit=selected_unit) | tojson }};
 	var todayBtn = document.getElementById("security-od-refresh-today");
 	if (todayBtn) {
 		todayBtn.addEventListener("click", function () {
 			window.location.href = securityTodayUrl;
+		});
+	}
+	var leaveTodayBtn = document.getElementById("security-leave-refresh-today");
+	if (leaveTodayBtn) {
+		leaveTodayBtn.addEventListener("click", function () {
+			window.location.href = leaveTodayUrl;
+		});
+	}
+	var itTodayBtn = document.getElementById("security-it-refresh-today");
+	if (itTodayBtn) {
+		itTodayBtn.addEventListener("click", function () {
+			window.location.href = itTodayUrl;
+		});
+	}
+	var vehicleTodayBtn = document.getElementById("security-vehicle-refresh-today");
+	if (vehicleTodayBtn) {
+		vehicleTodayBtn.addEventListener("click", function () {
+			window.location.href = vehicleTodayUrl;
 		});
 	}
 	var odoModalEl = document.getElementById("odOdoModal");
@@ -1495,7 +1338,7 @@
 
 	var visitorEndpoint = {{ url_for('security_visitor_gate') | tojson }};
 	var visitorGateUnit = {{ selected_unit | tojson }};
-	var visitorTodayUrl = {{ url_for('security', tab='visitor-request', unit=selected_unit) | tojson }};
+	var visitorTodayUrl = {{ url_for(section_endpoint, tab='visitor-request', unit=selected_unit) | tojson }};
 	var visitorTodayBtn = document.getElementById("security-visitor-refresh-today");
 	if (visitorTodayBtn) {
 		visitorTodayBtn.addEventListener("click", function () {
@@ -1725,6 +1568,11 @@
 		document.getElementById("security-it-delete-btn")
 	);
 	initSecurityDeleteToolbar(
+		document.getElementById("security-vehicle-select-all"),
+		".security-vehicle-request-select",
+		document.getElementById("security-vehicle-delete-btn")
+	);
+	initSecurityDeleteToolbar(
 		document.getElementById("security-permission-select-all"),
 		".security-permission-request-select",
 		document.getElementById("security-permission-delete-btn")
@@ -1848,314 +1696,5 @@
 	});
 })();
 
-(function () {
-	var shiftTypeEl = document.getElementById("wa-user-shift-type");
-	var gsWrap = document.getElementById("wa-user-shift-gs-wrap");
-	var rsWrap = document.getElementById("wa-user-shift-rs-wrap");
-	var addModalEl = document.getElementById("addWaUserModal");
-	var addSubmit = document.getElementById("add-wa-user-submit");
-	var addError = document.getElementById("add-wa-user-error");
-
-	function showAddUserError(msg) {
-		if (!addError) return;
-		if (msg) {
-			addError.textContent = msg;
-			addError.style.display = "block";
-		} else {
-			addError.textContent = "";
-			addError.style.display = "none";
-		}
-	}
-
-	function syncShiftFields() {
-		var isGs = !shiftTypeEl || shiftTypeEl.value === "GS";
-		if (gsWrap) gsWrap.style.display = isGs ? "block" : "none";
-		if (rsWrap) rsWrap.style.display = isGs ? "none" : "block";
-	}
-
-	function resetAddUserForm() {
-		showAddUserError("");
-		["wa-user-employee-id", "wa-user-name", "wa-user-department", "wa-user-mobile"].forEach(function (id) {
-			var el = document.getElementById(id);
-			if (el) el.value = "";
-		});
-		var sup = document.getElementById("wa-user-is-supervisor");
-		if (sup) sup.checked = false;
-		if (shiftTypeEl) shiftTypeEl.value = "GS";
-		syncShiftFields();
-	}
-
-	function collectAddUserPayload() {
-		var shiftType = shiftTypeEl ? shiftTypeEl.value : "GS";
-		var payload = {
-			employee_id: (document.getElementById("wa-user-employee-id") || {}).value || "",
-			name: (document.getElementById("wa-user-name") || {}).value || "",
-			department: (document.getElementById("wa-user-department") || {}).value || "",
-			employee_mobile: (document.getElementById("wa-user-mobile") || {}).value || "",
-			jmd_route: (document.getElementById("wa-user-jmd-route") || {}).value || "JMD1",
-			shift_type: shiftType,
-			is_supervisor: !!(document.getElementById("wa-user-is-supervisor") || {}).checked
-		};
-		if (shiftType === "GS") {
-			payload.shift_login = (document.getElementById("wa-user-shift-login") || {}).value || "";
-			payload.shift_logout = (document.getElementById("wa-user-shift-logout") || {}).value || "";
-		} else {
-			payload.shift1_login = (document.getElementById("wa-user-shift1-login") || {}).value || "";
-			payload.shift1_logout = (document.getElementById("wa-user-shift1-logout") || {}).value || "";
-			payload.shift2_login = (document.getElementById("wa-user-shift2-login") || {}).value || "";
-			payload.shift2_logout = (document.getElementById("wa-user-shift2-logout") || {}).value || "";
-		}
-		return payload;
-	}
-
-	if (shiftTypeEl) {
-		shiftTypeEl.addEventListener("change", syncShiftFields);
-		syncShiftFields();
-	}
-
-	if (addModalEl) {
-		addModalEl.addEventListener("hidden.bs.modal", resetAddUserForm);
-	}
-
-	if (addSubmit) {
-		addSubmit.addEventListener("click", function () {
-			showAddUserError("");
-			var payload = collectAddUserPayload();
-			addSubmit.disabled = true;
-			fetch("{{ url_for('security_add_whatsapp_user') }}", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(payload)
-			})
-				.then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
-				.then(function (result) {
-					if (result.ok && result.data && result.data.ok) {
-						if (addModalEl && typeof bootstrap !== "undefined") {
-							bootstrap.Modal.getOrCreateInstance(addModalEl).hide();
-						}
-						alert(result.data.created ? "WhatsApp user saved." : "WhatsApp user updated.");
-						return;
-					}
-					showAddUserError((result.data && result.data.error) || "Could not add user.");
-				})
-				.catch(function () {
-					showAddUserError("Network error. Please try again.");
-				})
-				.finally(function () {
-					addSubmit.disabled = false;
-				});
-		});
-	}
-})();
-
-(function () {
-	var lookupEndpoint = {{ url_for('security_lookup_whatsapp_user') | tojson }};
-	var updateEndpoint = {{ url_for('security_update_whatsapp_user') | tojson }};
-	var deleteEndpoint = {{ url_for('security_delete_whatsapp_user') | tojson }};
-	var manageModalEl = document.getElementById("manageWaUserModal");
-	var manageError = document.getElementById("manage-wa-user-error");
-	var formWrap = document.getElementById("manage-wa-user-form-wrap");
-	var searchInput = document.getElementById("manage-wa-user-search-mobile");
-	var searchBtn = document.getElementById("manage-wa-user-search-btn");
-	var updateBtn = document.getElementById("manage-wa-user-update-btn");
-	var deleteBtn = document.getElementById("manage-wa-user-delete-btn");
-	var shiftTypeEl = document.getElementById("manage-wa-user-shift-type");
-	var gsWrap = document.getElementById("manage-wa-user-shift-gs-wrap");
-	var rsWrap = document.getElementById("manage-wa-user-shift-rs-wrap");
-
-	function showManageError(msg) {
-		if (!manageError) return;
-		if (msg) {
-			manageError.textContent = msg;
-			manageError.style.display = "block";
-		} else {
-			manageError.textContent = "";
-			manageError.style.display = "none";
-		}
-	}
-
-	function syncManageShiftFields() {
-		var isGs = !shiftTypeEl || shiftTypeEl.value === "GS";
-		if (gsWrap) gsWrap.style.display = isGs ? "block" : "none";
-		if (rsWrap) rsWrap.style.display = isGs ? "none" : "block";
-	}
-
-	function setManageFormEnabled(enabled) {
-		if (updateBtn) updateBtn.disabled = !enabled;
-		if (deleteBtn) deleteBtn.disabled = !enabled;
-		if (formWrap) formWrap.style.display = enabled ? "block" : "none";
-	}
-
-	function resetManageModal() {
-		showManageError("");
-		setManageFormEnabled(false);
-		if (searchInput) searchInput.value = "";
-		["manage-wa-user-employee-id", "manage-wa-user-name", "manage-wa-user-department", "manage-wa-user-mobile"].forEach(function (id) {
-			var el = document.getElementById(id);
-			if (el) el.value = "";
-		});
-		var sup = document.getElementById("manage-wa-user-is-supervisor");
-		if (sup) sup.checked = false;
-		if (shiftTypeEl) shiftTypeEl.value = "GS";
-		syncManageShiftFields();
-	}
-
-	function toTimeInputValue(raw) {
-		var s = (raw || "").trim();
-		if (!s) return "";
-		var parts = s.split(":");
-		if (parts.length >= 2) {
-			return parts[0].padStart(2, "0") + ":" + parts[1].padStart(2, "0");
-		}
-		return s;
-	}
-
-	function fillManageForm(user) {
-		document.getElementById("manage-wa-user-employee-id").value = user.employee_id || "";
-		document.getElementById("manage-wa-user-name").value = user.name || "";
-		document.getElementById("manage-wa-user-department").value = user.department || "";
-		document.getElementById("manage-wa-user-mobile").value = user.employee_mobile || "";
-		document.getElementById("manage-wa-user-jmd-route").value = user.jmd_route || "JMD1";
-		shiftTypeEl.value = user.shift_type || "GS";
-		document.getElementById("manage-wa-user-shift-login").value = toTimeInputValue(user.shift_login);
-		document.getElementById("manage-wa-user-shift-logout").value = toTimeInputValue(user.shift_logout);
-		document.getElementById("manage-wa-user-shift1-login").value = toTimeInputValue(user.shift1_login);
-		document.getElementById("manage-wa-user-shift1-logout").value = toTimeInputValue(user.shift1_logout);
-		document.getElementById("manage-wa-user-shift2-login").value = toTimeInputValue(user.shift2_login);
-		document.getElementById("manage-wa-user-shift2-logout").value = toTimeInputValue(user.shift2_logout);
-		document.getElementById("manage-wa-user-is-supervisor").checked = !!user.is_supervisor;
-		syncManageShiftFields();
-		setManageFormEnabled(true);
-	}
-
-	function collectManagePayload() {
-		var shiftType = shiftTypeEl ? shiftTypeEl.value : "GS";
-		var payload = {
-			employee_id: document.getElementById("manage-wa-user-employee-id").value || "",
-			name: document.getElementById("manage-wa-user-name").value || "",
-			department: document.getElementById("manage-wa-user-department").value || "",
-			employee_mobile: document.getElementById("manage-wa-user-mobile").value || "",
-			jmd_route: document.getElementById("manage-wa-user-jmd-route").value || "JMD1",
-			shift_type: shiftType,
-			is_supervisor: !!document.getElementById("manage-wa-user-is-supervisor").checked
-		};
-		if (shiftType === "GS") {
-			payload.shift_login = document.getElementById("manage-wa-user-shift-login").value || "";
-			payload.shift_logout = document.getElementById("manage-wa-user-shift-logout").value || "";
-		} else {
-			payload.shift1_login = document.getElementById("manage-wa-user-shift1-login").value || "";
-			payload.shift1_logout = document.getElementById("manage-wa-user-shift1-logout").value || "";
-			payload.shift2_login = document.getElementById("manage-wa-user-shift2-login").value || "";
-			payload.shift2_logout = document.getElementById("manage-wa-user-shift2-logout").value || "";
-		}
-		return payload;
-	}
-
-	if (shiftTypeEl) {
-		shiftTypeEl.addEventListener("change", syncManageShiftFields);
-		syncManageShiftFields();
-	}
-
-	if (manageModalEl) {
-		manageModalEl.addEventListener("hidden.bs.modal", resetManageModal);
-	}
-
-	function runSearch() {
-		showManageError("");
-		setManageFormEnabled(false);
-		var mobile = (searchInput && searchInput.value || "").trim();
-		if (!mobile) {
-			showManageError("Enter a mobile number to search.");
-			return;
-		}
-		if (searchBtn) searchBtn.disabled = true;
-		fetch(lookupEndpoint + "?mobile=" + encodeURIComponent(mobile))
-			.then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
-			.then(function (result) {
-				if (result.ok && result.data && result.data.ok && result.data.user) {
-					fillManageForm(result.data.user);
-					return;
-				}
-				showManageError((result.data && result.data.error) || "User not found.");
-			})
-			.catch(function () {
-				showManageError("Network error. Please try again.");
-			})
-			.finally(function () {
-				if (searchBtn) searchBtn.disabled = false;
-			});
-	}
-
-	if (searchBtn) searchBtn.addEventListener("click", runSearch);
-	if (searchInput) {
-		searchInput.addEventListener("keydown", function (e) {
-			if (e.key === "Enter") {
-				e.preventDefault();
-				runSearch();
-			}
-		});
-	}
-
-	if (updateBtn) {
-		updateBtn.addEventListener("click", function () {
-			showManageError("");
-			updateBtn.disabled = true;
-			fetch(updateEndpoint, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(collectManagePayload())
-			})
-				.then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
-				.then(function (result) {
-					if (result.ok && result.data && result.data.ok) {
-						alert("WhatsApp user updated.");
-						if (manageModalEl && typeof bootstrap !== "undefined") {
-							bootstrap.Modal.getOrCreateInstance(manageModalEl).hide();
-						}
-						return;
-					}
-					showManageError((result.data && result.data.error) || "Could not update user.");
-					updateBtn.disabled = false;
-				})
-				.catch(function () {
-					showManageError("Network error. Please try again.");
-					updateBtn.disabled = false;
-				});
-		});
-	}
-
-	if (deleteBtn) {
-		deleteBtn.addEventListener("click", function () {
-			var mobile = document.getElementById("manage-wa-user-mobile").value || "";
-			if (!mobile) return;
-			if (!window.confirm("Delete WhatsApp user " + mobile + "? They will no longer be able to use the bot.")) {
-				return;
-			}
-			showManageError("");
-			deleteBtn.disabled = true;
-			fetch(deleteEndpoint, {
-				method: "DELETE",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ employee_mobile: mobile })
-			})
-				.then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
-				.then(function (result) {
-					if (result.ok && result.data && result.data.ok) {
-						alert("WhatsApp user deleted.");
-						if (manageModalEl && typeof bootstrap !== "undefined") {
-							bootstrap.Modal.getOrCreateInstance(manageModalEl).hide();
-						}
-						return;
-					}
-					showManageError((result.data && result.data.error) || "Could not delete user.");
-					deleteBtn.disabled = false;
-				})
-				.catch(function () {
-					showManageError("Network error. Please try again.");
-					deleteBtn.disabled = false;
-				});
-		});
-	}
-})();
 </script>
 {% endblock %}

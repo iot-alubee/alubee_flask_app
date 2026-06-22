@@ -23,6 +23,9 @@ PAGE_KEYS = [
     ("maintenance", "Maintenance"),
     ("documents", "Documents"),
     ("security", "Security"),
+    ("hr", "HR"),
+    ("it", "IT"),
+    ("logistics", "Logistics"),
     ("help", "Help"),
 ]
 

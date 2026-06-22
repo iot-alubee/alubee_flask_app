@@ -386,6 +386,44 @@
 							</a>
 						</li>
 						{% endif %}
+						{% if show_hr_nav %}
+						<li class="nav-item">
+							<a class="nav-link {{ 'active' if active_nav|default('') == 'hr' else '' }}" href="{{ url_for('hr') }}">
+								<span class="nav-icon">
+									<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-people" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+										<path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1h8zm-7.978-1A.261.261 0 0 1 7 12.996c.001-.264.097-.52.268-.715.22-.243.55-.378.878-.378s.658.135.878.378c.17.195.267.451.268.715 0 .002 0 .002 0 .004l-.001.014zM7.5 5.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/>
+										<path fill-rule="evenodd" d="M2 1a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h.5a.5.5 0 0 0 .5-.5V3.914a1 1 0 0 0-.293-.707L2.293 2.293A1 1 0 0 0 2 1zm12 0a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-.5a.5.5 0 0 1-.5-.5V3.914a1 1 0 0 1 .293-.707L13.707 2.293A1 1 0 0 1 14 1z"/>
+									</svg>
+								</span>
+								<span class="nav-link-text">HR</span>
+							</a>
+						</li>
+						{% endif %}
+						{% if show_it_nav %}
+						<li class="nav-item">
+							<a class="nav-link {{ 'active' if active_nav|default('') == 'it' else '' }}" href="{{ url_for('it') }}">
+								<span class="nav-icon">
+									<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-pc-display" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+										<path d="M2.5 2A1.5 1.5 0 0 0 1 3.5v9A1.5 1.5 0 0 0 2.5 14h2.086a.5.5 0 0 0 .353-.146l1.854-1.854A.5.5 0 0 1 6.5 12h7a.5.5 0 0 0 .5-.5v-9A1.5 1.5 0 0 0 12.5 2h-10z"/>
+										<path d="M12.5 3a.5.5 0 0 1 .5.5v9l-1.5-1.5V3.5a.5.5 0 0 1 .5-.5h.5z"/>
+									</svg>
+								</span>
+								<span class="nav-link-text">IT</span>
+							</a>
+						</li>
+						{% endif %}
+						{% if show_logistics_nav %}
+						<li class="nav-item">
+							<a class="nav-link {{ 'active' if active_nav|default('') == 'logistics' else '' }}" href="{{ url_for('logistics') }}">
+								<span class="nav-icon">
+									<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-truck" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+										<path d="M0 3.5A1.5 1.5 0 0 1 1.5 2h9A1.5 1.5 0 0 1 12 3.5V5h1.02a1.5 1.5 0 0 1 1.17.563l1.481 1.85a1.5 1.5 0 0 1 .329.938V10.5a1.5 1.5 0 0 1-1.5 1.5H14a2 2 0 1 1-4 0H5a2 2 0 1 1-3.998-.085A1.5 1.5 0 0 1 0 10.5v-7zm1.294 7.456A1.999 1.999 0 0 1 4.732 11h5.536a2.01 2.01 0 0 1 .732-.732V3.5a.5.5 0 0 0-.5-.5h-9a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .294.456zM12 10a2 2 0 0 1 1.732 1H12V10z"/>
+									</svg>
+								</span>
+								<span class="nav-link-text">Logistics</span>
+							</a>
+						</li>
+						{% endif %}
 						{% if is_admin %}
 						<li class="nav-item">
 							<a class="nav-link {{ 'active' if active_nav|default('') == 'admin' else '' }}" href="{{ url_for('admin') }}">

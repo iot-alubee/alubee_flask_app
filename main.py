@@ -72,19 +72,28 @@ login_manager.login_message = "Please log in to access this page."
 SECURITY_UNIT_I_EMAIL = "security.1@alubee.com"
 SECURITY_UNIT_II_EMAIL = "security.2@alubee.com"
 HR_SECURITY_EMAIL = "hr@alubee.com"
+IT_EMAIL = "it@alubee.com"
+LOGISTICS_EMAIL = "ppc@alubee.com"
 
 # Built-in accounts (SQLite). Change passwords after deploy in production.
 _DEFAULT_ADMIN = ("admin@alubee.com", "admin123")
-_DEFAULT_SECURITY_USERS = (
-    (SECURITY_UNIT_I_EMAIL, "security@alubee"),
-    (SECURITY_UNIT_II_EMAIL, "security@alubee"),
-    (HR_SECURITY_EMAIL, "hr@alubee"),
+_DEFAULT_BUILTIN_VIEWERS = (
+    (SECURITY_UNIT_I_EMAIL, "security@alubee", ("security",)),
+    (SECURITY_UNIT_II_EMAIL, "security@alubee", ("security",)),
+    (HR_SECURITY_EMAIL, "hr@alubee", ("hr",)),
+    (IT_EMAIL, "it@alubee", ("it",)),
+    (LOGISTICS_EMAIL, "ppc@alubee", ("logistics",)),
 )
-_SECURITY_VIEWER_PAGES = ("security",)
+_VIEWER_LANDING_ROUTES = {
+    "security": "security",
+    "hr": "hr",
+    "it": "it",
+    "logistics": "logistics",
+}
 
 
-def _ensure_builtin_security_user(email: str, password: str) -> None:
-    """Security gate logins: viewer role, Security tab only (not admin)."""
+def _ensure_builtin_viewer_user(email: str, password: str, pages: tuple[str, ...]) -> None:
+    """Built-in viewer logins with access to specific portal tabs only."""
     email = email.strip().lower()
     existing = auth.get_user_by_email(email)
     if existing is None:
@@ -103,7 +112,7 @@ def _ensure_builtin_security_user(email: str, password: str) -> None:
         conn.commit()
         conn.close()
     if user_id:
-        auth.set_viewer_pages(user_id, list(_SECURITY_VIEWER_PAGES))
+        auth.set_viewer_pages(user_id, list(pages))
 
 
 def _ensure_auth_database():
@@ -124,8 +133,8 @@ def _ensure_auth_database():
             )
             conn.commit()
             conn.close()
-        for email, password in _DEFAULT_SECURITY_USERS:
-            _ensure_builtin_security_user(email, password)
+        for email, password, pages in _DEFAULT_BUILTIN_VIEWERS:
+            _ensure_builtin_viewer_user(email, password, pages)
     except Exception as e:
         app.logger.exception("Auth database initialization failed: %s", e)
 
@@ -735,14 +744,16 @@ def load_user(user_id):
 
 
 def _login_landing_url(user: User) -> str:
-    """Where to send the user after login (security-only → Security page)."""
+    """Where to send the user after login (single-tab viewers → their page)."""
     email = (user.email or "").strip().lower()
     if email in (SECURITY_UNIT_I_EMAIL, SECURITY_UNIT_II_EMAIL):
         return url_for("security")
     if (user.role or "").strip().lower() == "viewer":
         pages = list(user.allowed_pages or [])
-        if pages == ["security"] or set(pages) == {"security"}:
-            return url_for("security")
+        if len(pages) == 1:
+            route = _VIEWER_LANDING_ROUTES.get(pages[0])
+            if route:
+                return url_for(route)
     return url_for("index")
 
 
@@ -776,14 +787,14 @@ def _user_is_admin() -> bool:
 
 
 def _user_can_access_security():
-    """Security / On Duty: admin/editor, or viewer with 'security' or 'documents' page."""
+    """Security gate APIs: admin/editor, or viewer with 'security' page."""
     if not current_user.is_authenticated:
         return False
     role = (getattr(current_user, "role", "") or "").strip().lower()
     if role in ("admin", "editor"):
         return True
     pages = getattr(current_user, "allowed_pages", None) or []
-    return "security" in pages or "documents" in pages
+    return "security" in pages
 
 
 def _firebase_cred_path():
@@ -2758,14 +2769,19 @@ def inject_nav_permissions():
     if current_user.is_authenticated:
         role = (getattr(current_user, "role", None) or "viewer").strip().lower()
         pages = getattr(current_user, "allowed_pages", None) or []
-        show_security = role in ("admin", "editor") or (
-            role == "viewer" and ("security" in pages or "documents" in pages)
-        )
+        def _show(page_key: str) -> bool:
+            return role in ("admin", "editor") or (
+                role == "viewer" and page_key in pages
+            )
+
         return {
             "allowed_pages": pages,
             "user_role": role,
             "is_admin": role == "admin",
-            "show_security_nav": show_security,
+            "show_security_nav": _show("security"),
+            "show_hr_nav": _show("hr"),
+            "show_it_nav": _show("it"),
+            "show_logistics_nav": _show("logistics"),
             "iot_health_monitoring_enabled": IOT_HEALTH_MONITORING_ENABLED,
         }
     return {
@@ -2773,6 +2789,9 @@ def inject_nav_permissions():
         "user_role": "",
         "is_admin": False,
         "show_security_nav": False,
+        "show_hr_nav": False,
+        "show_it_nav": False,
+        "show_logistics_nav": False,
         "iot_health_monitoring_enabled": IOT_HEALTH_MONITORING_ENABLED,
     }
 
@@ -5251,12 +5270,143 @@ def documents():
 SECURITY_TABS = (
     ("on-duty", "OD Request"),
     ("visitor-request", "Visitor Request"),
-    ("leave-request", "Leave Request"),
-    ("permission-request", "Permission Request"),
     ("vehicle-request", "Vehicle Request"),
-    ("it-request", "IT Request"),
-    ("approver-status", "Approver Status"),
 )
+
+HR_TABS = (
+    ("leave-request", "Leave Request"),
+)
+
+IT_TABS = (
+    ("it-request", "IT Request"),
+)
+
+
+def _render_requests_page(
+    page_key: str,
+    active_nav: str,
+    tabs: tuple[tuple[str, str], ...],
+    default_tab: str,
+):
+    require_page(page_key)
+    tab = (request.args.get("tab") or default_tab).strip().lower()
+    allowed_tabs = {k for k, _ in tabs}
+    if tab not in allowed_tabs:
+        tab = default_tab
+    ist_today = _ist_today_date()
+    selected_day = _parse_security_table_date(request.args.get("date"), ist_today)
+    selected_unit, unit_filter_locked = _security_unit_for_session(request.args.get("unit"))
+    jmd_route_filter = _parse_security_unit_filter(selected_unit)
+    od_requests = []
+    visitor_requests = []
+    leave_requests = []
+    it_requests = []
+    vehicle_requests = []
+    permission_emp_requests = []
+    permission_cl_requests = []
+    permission_view = (request.args.get("permission_view") or "emp").strip().lower()
+    if permission_view not in ("emp", "cl"):
+        permission_view = "emp"
+    approver_status_rows = []
+    firestore_error = None
+    if tab == "on-duty":
+        od_requests, firestore_error = fetch_security_od_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+        )
+    elif tab == "visitor-request":
+        visitor_requests, firestore_error = fetch_security_visitor_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+            security_tab_unit=selected_unit,
+        )
+    elif tab == "leave-request":
+        leave_requests, firestore_error = fetch_security_leave_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+        )
+    elif tab == "vehicle-request":
+        vehicle_requests, firestore_error = fetch_security_vehicle_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+        )
+    elif tab == "it-request":
+        it_requests, firestore_error = fetch_security_it_requests(
+            ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
+        )
+    elif tab == "permission-request":
+        permission_emp_requests, permission_cl_requests, firestore_error = (
+            fetch_security_permission_requests(
+                ist_day=selected_day,
+                jmd_route_filter=jmd_route_filter,
+            )
+        )
+    elif tab == "approver-status":
+        db, err = _get_firestore_client()
+        if err:
+            firestore_error = err
+        else:
+            try:
+                approver_status_rows = _fetch_security_approver_status(db)
+            except Exception as e:
+                app.logger.exception("Firestore approver status fetch failed")
+                firestore_error = _firestore_user_message(e)
+    return render_template(
+        "security.html",
+        active_nav=active_nav,
+        section_endpoint=active_nav,
+        security_tabs=tabs,
+        selected_tab=tab,
+        od_requests=od_requests,
+        visitor_requests=visitor_requests,
+        leave_requests=leave_requests,
+        it_requests=it_requests,
+        vehicle_requests=vehicle_requests,
+        permission_emp_requests=permission_emp_requests,
+        permission_cl_requests=permission_cl_requests,
+        permission_view=permission_view,
+        approver_status_rows=approver_status_rows,
+        firestore_error=firestore_error,
+        selected_date_iso=selected_day.strftime("%Y-%m-%d"),
+        selected_unit=selected_unit,
+        unit_filter_locked=unit_filter_locked,
+        can_delete_requests=_user_is_admin(),
+    )
+
+
+@app.route("/security")
+@login_required
+def security():
+    return _render_requests_page("security", "security", SECURITY_TABS, "on-duty")
+
+
+@app.route("/hr")
+@login_required
+def hr():
+    return _render_requests_page("hr", "hr", HR_TABS, "leave-request")
+
+
+@app.route("/it")
+@login_required
+def it():
+    return _render_requests_page("it", "it", IT_TABS, "it-request")
+
+
+@app.route("/logistics")
+@login_required
+def logistics():
+    require_page("logistics")
+    ist_today = _ist_today_date()
+    selected_day = _parse_security_table_date(request.args.get("date"), ist_today)
+    selected_unit, unit_filter_locked = _security_unit_for_session(request.args.get("unit"))
+    return render_template(
+        "logistics.html",
+        active_nav="logistics",
+        selected_date_iso=selected_day.strftime("%Y-%m-%d"),
+        selected_unit=selected_unit,
+        unit_filter_locked=unit_filter_locked,
+    )
 
 
 def _digits_only(value: str) -> str:
@@ -5451,95 +5601,6 @@ def _delete_firestore_request(request_id: str) -> tuple[bool, str | None]:
         return False, "Request not found"
     ref.delete()
     return True, None
-
-
-@app.route("/security")
-@login_required
-def security():
-    require_page("security")
-    tab = (request.args.get("tab") or "on-duty").strip().lower()
-    allowed_tabs = {k for k, _ in SECURITY_TABS}
-    if tab not in allowed_tabs:
-        tab = "on-duty"
-    ist_today = _ist_today_date()
-    selected_day = _parse_security_table_date(request.args.get("date"), ist_today)
-    selected_unit, unit_filter_locked = _security_unit_for_session(request.args.get("unit"))
-    jmd_route_filter = _parse_security_unit_filter(selected_unit)
-    od_requests = []
-    visitor_requests = []
-    leave_requests = []
-    it_requests = []
-    vehicle_requests = []
-    permission_emp_requests = []
-    permission_cl_requests = []
-    permission_view = (request.args.get("permission_view") or "emp").strip().lower()
-    if permission_view not in ("emp", "cl"):
-        permission_view = "emp"
-    approver_status_rows = []
-    firestore_error = None
-    if tab == "on-duty":
-        od_requests, firestore_error = fetch_security_od_requests(
-            ist_day=selected_day,
-            jmd_route_filter=jmd_route_filter,
-        )
-    elif tab == "visitor-request":
-        visitor_requests, firestore_error = fetch_security_visitor_requests(
-            ist_day=selected_day,
-            jmd_route_filter=jmd_route_filter,
-            security_tab_unit=selected_unit,
-        )
-    elif tab == "leave-request":
-        leave_requests, firestore_error = fetch_security_leave_requests(
-            ist_day=selected_day,
-            jmd_route_filter=jmd_route_filter,
-        )
-    elif tab == "vehicle-request":
-        vehicle_requests, firestore_error = fetch_security_vehicle_requests(
-            ist_day=selected_day,
-            jmd_route_filter=jmd_route_filter,
-        )
-    elif tab == "it-request":
-        it_requests, firestore_error = fetch_security_it_requests(
-            ist_day=selected_day,
-            jmd_route_filter=jmd_route_filter,
-        )
-    elif tab == "permission-request":
-        permission_emp_requests, permission_cl_requests, firestore_error = (
-            fetch_security_permission_requests(
-                ist_day=selected_day,
-                jmd_route_filter=jmd_route_filter,
-            )
-        )
-    elif tab == "approver-status":
-        db, err = _get_firestore_client()
-        if err:
-            firestore_error = err
-        else:
-            try:
-                approver_status_rows = _fetch_security_approver_status(db)
-            except Exception as e:
-                app.logger.exception("Firestore approver status fetch failed")
-                firestore_error = _firestore_user_message(e)
-    return render_template(
-        "security.html",
-        active_nav="security",
-        security_tabs=SECURITY_TABS,
-        selected_tab=tab,
-        od_requests=od_requests,
-        visitor_requests=visitor_requests,
-        leave_requests=leave_requests,
-        it_requests=it_requests,
-        vehicle_requests=vehicle_requests,
-        permission_emp_requests=permission_emp_requests,
-        permission_cl_requests=permission_cl_requests,
-        permission_view=permission_view,
-        approver_status_rows=approver_status_rows,
-        firestore_error=firestore_error,
-        selected_date_iso=selected_day.strftime("%Y-%m-%d"),
-        selected_unit=selected_unit,
-        unit_filter_locked=unit_filter_locked,
-        can_delete_requests=_user_is_admin(),
-    )
 
 
 @app.route("/security/api/od-gate", methods=["POST"])
