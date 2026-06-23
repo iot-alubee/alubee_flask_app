@@ -9,3 +9,5 @@ flask
 flask-login
 gunicorn
 firebase-admin
+requests
+certifi

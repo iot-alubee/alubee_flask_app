@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
+import vehicle_notify
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -2084,6 +2085,7 @@ def _vehicle_status_label(raw: str) -> str:
         "PENDING": "Pending",
         "ASSIGNED": "Assigned",
         "STARTED": "Started",
+        "IN_PROGRESS": "In Progress",
         "COMPLETED": "Completed",
         "CANCELLED": "Cancelled",
     }
@@ -2225,6 +2227,372 @@ def _security_record_vehicle_gate(request_id: str, action: str):
     except Exception as e:
         app.logger.exception("security vehicle gate update failed")
         return False, str(e)
+
+
+LOGISTICS_EXTERNAL_VENDORS: tuple[tuple[str, str], ...] = (
+    ("annai_transport", "Annai Transport"),
+    ("challa_transport", "Challa Transport"),
+    ("sridhar_transport", "Sridhar Transport"),
+    ("chella_transport", "Chella Transport"),
+)
+
+
+def _logistics_normalize_code(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (value or "").strip().lower()).strip("_")
+
+
+def _logistics_department_name() -> str:
+    return (
+        os.getenv("VEHICLE_INTERNAL_ASSIGN_DEPARTMENT")
+        or os.getenv("LOGISTICS_DEPARTMENT_NAME")
+        or "LOGISTICS"
+    ).strip().upper()
+
+
+def _logistics_vehicle_status_raw(rd: dict) -> str:
+    return (
+        rd.get("vehicle_request_status") or rd.get("logistics_status") or "PENDING"
+    ).strip().upper()
+
+
+def _logistics_vehicle_trip_started(rd: dict) -> bool:
+    return _logistics_vehicle_status_raw(rd) == "STARTED"
+
+
+def _logistics_staff_options(db) -> list[dict]:
+    dept = _logistics_department_name()
+    rows: list[dict] = []
+    try:
+        snaps = db.collection("users").where("department", "==", dept).stream()
+    except Exception:
+        app.logger.exception("logistics staff query failed dept=%s", dept)
+        return rows
+    for snap in snaps:
+        ud = snap.to_dict() or {}
+        emp_id = (ud.get("employee_id") or "").strip()
+        if not emp_id:
+            continue
+        rows.append({
+            "code": _logistics_normalize_code(emp_id),
+            "label": (ud.get("name") or emp_id).strip(),
+            "wa_id": snap.id,
+        })
+    rows.sort(key=lambda item: item["label"].lower())
+    return rows
+
+
+def _logistics_assignee_options(db, vehicle_type: str) -> list[dict]:
+    vtype = (vehicle_type or "").strip().lower()
+    if vtype in ("in_house", "internal", "company_vehicle"):
+        return _logistics_staff_options(db)
+    return [{"code": code, "label": label, "wa_id": ""} for code, label in LOGISTICS_EXTERNAL_VENDORS]
+
+
+def _logistics_staff_wa_for_code(db, assignee_code: str) -> str:
+    code = _logistics_normalize_code(assignee_code)
+    if not code:
+        return ""
+    for item in _logistics_staff_options(db):
+        if item["code"] == code:
+            return (item.get("wa_id") or "").strip()
+    return ""
+
+
+def _logistics_assignee_label(options: list[dict], code: str) -> str:
+    norm = _logistics_normalize_code(code)
+    for item in options:
+        if item["code"] == norm:
+            return item["label"]
+    return ""
+
+
+def _user_can_access_logistics() -> bool:
+    if not current_user.is_authenticated:
+        return False
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role in ("admin", "editor"):
+        return True
+    pages = getattr(current_user, "allowed_pages", None) or []
+    return "logistics" in pages
+
+
+def _fetch_logistics_vehicle_requests_inner(
+    ist_day,
+    db,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    buf = []
+    for snap in _security_requests_snapshots(db, "VEHICLE_REQUEST"):
+        d = snap.to_dict() or {}
+        ts = d.get("requested_datetime")
+        if ist_day is not None:
+            if _requested_datetime_ist_date(ts) != ist_day:
+                continue
+        if jmd_route_filter and not _vehicle_matches_unit_filter(d, jmd_route_filter):
+            continue
+        buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
+
+    buf.sort(key=lambda x: x[0], reverse=True)
+    buf = buf[:300]
+    rows = []
+    for _, d, snap_id in buf:
+        status_raw = _logistics_vehicle_status_raw(d)
+        trip_started = _logistics_vehicle_trip_started(d)
+        rows.append({
+            "request_id": d.get("request_id") or snap_id,
+            "requested_date": _format_firestore_date_ist(d.get("requested_datetime")),
+            "requested_time": _format_firestore_time_ist_12h(d.get("requested_datetime")),
+            "employee_id": d.get("employee_id") or "",
+            "employee_name": d.get("employee_name") or "",
+            "department": d.get("department") or "",
+            "from_unit_label": d.get("from_unit_label") or "—",
+            "request_type_label": d.get("request_type_label") or "",
+            "destination_category_label": d.get("destination_category_label") or "",
+            "destination_label": d.get("destination_label") or "",
+            "location_details": d.get("location_details") or "",
+            "vehicle_type_label": d.get("vehicle_type_label") or "—",
+            "hire_vehicle_type_label": d.get("hire_vehicle_type_label") or "—",
+            "load_size_label": d.get("load_size_label") or "",
+            "estimated_distance_display": d.get("estimated_distance_display") or "—",
+            "required_at": d.get("required_at") or "—",
+            "required_time": d.get("required_time") or "",
+            "assigned_to": d.get("assigned_to") or "—",
+            "assigned_to_code": d.get("assigned_to_code") or "",
+            "vehicle_status": _vehicle_status_label(status_raw),
+            "vehicle_status_raw": status_raw,
+            "security_out_at": _format_firestore_time_ist_12h(d.get("security_out_at")) or "—",
+            "security_in_at": _format_firestore_time_ist_12h(d.get("security_in_at")) or "—",
+            "assigned_at": _format_firestore_time_ist_12h(d.get("assigned_at")) or "—",
+            "can_assign": status_raw == "PENDING",
+            "can_reassign": status_raw == "ASSIGNED" and not trip_started,
+            "can_cancel": status_raw in ("PENDING", "ASSIGNED") and not trip_started,
+        })
+    return rows
+
+
+def fetch_logistics_vehicle_requests(
+    ist_day=None,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    db, err = _get_firestore_client()
+    if err:
+        return [], err
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _fetch_logistics_vehicle_requests_inner,
+                ist_day,
+                db,
+                jmd_route_filter=jmd_route_filter,
+            )
+            return future.result(timeout=25), None
+    except TimeoutError:
+        app.logger.error("Firestore logistics vehicle fetch timed out")
+        return [], (
+            "Firestore request timed out. Check that the Cloud Run service account has "
+            "Cloud Datastore User on whatsapp-approval-system."
+        )
+    except Exception as e:
+        app.logger.exception("Firestore logistics vehicle fetch failed")
+        return [], _firestore_user_message(e)
+
+
+def _logistics_load_vehicle_request(db, request_id: str):
+    rid = (request_id or "").strip()
+    if not rid:
+        return None, None, "Missing request id"
+    ref = db.collection("requests").document(rid)
+    snap = ref.get()
+    if not snap.exists:
+        return None, None, "Request not found"
+    d = snap.to_dict() or {}
+    if (d.get("type") or "").strip().upper() != "VEHICLE_REQUEST":
+        return None, None, "Not a vehicle request"
+    return ref, d, None
+
+
+def _logistics_normalize_vehicle_type(raw: str) -> str:
+    key = (raw or "").strip().lower().replace(" ", "_")
+    if key in ("internal", "in_house", "company_vehicle"):
+        return "in_house"
+    if key in ("external", "external_hire", "hire", "external_vehicle"):
+        return "external_hire"
+    return key
+
+
+def _logistics_send_assign_notifications(
+    db,
+    rd: dict,
+    *,
+    request_id: str,
+    assignee_code: str,
+    assignee_label: str,
+    reassign: bool = False,
+    old_assignee_wa: str = "",
+    employee_wa: str = "",
+) -> None:
+    """Best-effort WhatsApp messages after portal assign / re-assign."""
+    try:
+        vehicle_notify.notify_vehicle_assignee(
+            db,
+            rd,
+            request_id=request_id,
+            assignee_code=assignee_code,
+            assignee_label=assignee_label,
+        )
+        display = vehicle_notify.sentence_case_name(assignee_label)
+        if reassign and old_assignee_wa:
+            vehicle_notify.send_text(
+                old_assignee_wa,
+                f"The request has been re-assigned to {display}. Thanks.",
+            )
+        if employee_wa:
+            if reassign:
+                msg = f"Your vehicle request has been re-assigned to {display}."
+            else:
+                msg = f"Your vehicle request has been assigned to {display}."
+            vehicle_notify.send_text(employee_wa, msg)
+    except Exception:
+        app.logger.exception(
+            "logistics WhatsApp notify failed request_id=%s", request_id
+        )
+
+
+def _logistics_assign_vehicle(
+    request_id: str,
+    vehicle_type: str,
+    assignee_code: str,
+    *,
+    reassign: bool = False,
+) -> tuple[bool, str | None]:
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, rd, err = _logistics_load_vehicle_request(db, request_id)
+    if err:
+        return False, err
+
+    status = _logistics_vehicle_status_raw(rd)
+    if reassign:
+        if status != "ASSIGNED":
+            return False, "Only assigned requests can be re-assigned"
+        if _logistics_vehicle_trip_started(rd):
+            return False, "Trip has already started"
+    elif status != "PENDING":
+        return False, "Request is not pending"
+
+    vtype = _logistics_normalize_vehicle_type(vehicle_type)
+    if vtype not in ("in_house", "external_hire"):
+        return False, "Invalid vehicle type"
+
+    code = _logistics_normalize_code(assignee_code)
+    options = _logistics_assignee_options(db, vtype)
+    label = _logistics_assignee_label(options, code)
+    if not label:
+        return False, "Invalid assignee"
+
+    if reassign and code == _logistics_normalize_code(rd.get("assigned_to_code") or ""):
+        return False, "Choose a different assignee"
+
+    is_internal = vtype == "in_house"
+    staff_wa = _logistics_staff_wa_for_code(db, code) if is_internal else ""
+    now = datetime.now(timezone.utc)
+    actor = (getattr(current_user, "email", None) or "logistics_portal").strip()
+    old_wa = (rd.get("assigned_to_wa") or "").strip() if reassign else ""
+    employee_wa = (rd.get("employee") or "").strip()
+
+    update = {
+        "vehicle_request_status": "ASSIGNED",
+        "vehicle_type": vtype,
+        "vehicle_type_label": "Internal" if is_internal else "External",
+        "assigned_to": label,
+        "assigned_to_code": code,
+        "assigned_to_wa": staff_wa,
+        "assigned_by": actor,
+        "assigned_at": now,
+        "assignee_can_start": is_internal,
+        "is_active_trip": False,
+    }
+    if reassign:
+        update["previous_assignee"] = rd.get("assigned_to") or ""
+        update["previous_assignee_code"] = rd.get("assigned_to_code") or ""
+        update["previous_assignee_wa"] = rd.get("assigned_to_wa") or ""
+        update["reassigned_at"] = now
+    try:
+        ref.update(update)
+    except Exception as e:
+        app.logger.exception("logistics assign failed request_id=%s", request_id)
+        return False, str(e)
+
+    updated = ref.get().to_dict() or {}
+    _logistics_send_assign_notifications(
+        db,
+        updated,
+        request_id=request_id,
+        assignee_code=code,
+        assignee_label=label,
+        reassign=reassign,
+        old_assignee_wa=old_wa,
+        employee_wa=employee_wa,
+    )
+    app.logger.info(
+        "logistics %s request_id=%s assignee=%s by=%s",
+        "reassign" if reassign else "assign",
+        request_id,
+        label,
+        actor,
+    )
+    return True, None
+
+
+def _logistics_cancel_vehicle(request_id: str) -> tuple[bool, str | None]:
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, rd, err = _logistics_load_vehicle_request(db, request_id)
+    if err:
+        return False, err
+
+    status = _logistics_vehicle_status_raw(rd)
+    if _logistics_vehicle_trip_started(rd):
+        return False, "Trip has already started"
+    if status not in ("PENDING", "ASSIGNED"):
+        return False, "Only pending or assigned requests can be cancelled"
+
+    actor = (getattr(current_user, "email", None) or "logistics_portal").strip()
+    now = datetime.now(timezone.utc)
+    assignee_wa = (rd.get("assigned_to_wa") or "").strip()
+    employee_wa = (rd.get("employee") or "").strip()
+    try:
+        ref.update({
+            "vehicle_request_status": "CANCELLED",
+            "cancelled_by": actor,
+            "cancelled_at": now,
+            "assignee_can_start": False,
+            "is_active_trip": False,
+        })
+    except Exception as e:
+        app.logger.exception("logistics cancel failed request_id=%s", request_id)
+        return False, str(e)
+    try:
+        if assignee_wa:
+            vehicle_notify.send_text(
+                assignee_wa,
+                "Your assigned vehicle request has been cancelled by logistics.",
+            )
+        if employee_wa:
+            vehicle_notify.send_text(
+                employee_wa,
+                "Your vehicle request has been cancelled by logistics.",
+            )
+    except Exception:
+        app.logger.exception(
+            "logistics cancel WhatsApp notify failed request_id=%s", request_id
+        )
+    app.logger.info("logistics cancel request_id=%s by=%s", request_id, actor)
+    return True, None
 
 
 def _parse_permission_ddmmy(raw: str):
@@ -5400,13 +5768,89 @@ def logistics():
     ist_today = _ist_today_date()
     selected_day = _parse_security_table_date(request.args.get("date"), ist_today)
     selected_unit, unit_filter_locked = _security_unit_for_session(request.args.get("unit"))
+    jmd_route_filter = _parse_security_unit_filter(selected_unit)
+    vehicle_requests, firestore_error = fetch_logistics_vehicle_requests(
+        ist_day=selected_day,
+        jmd_route_filter=jmd_route_filter,
+    )
     return render_template(
         "logistics.html",
         active_nav="logistics",
+        vehicle_requests=vehicle_requests,
+        firestore_error=firestore_error,
         selected_date_iso=selected_day.strftime("%Y-%m-%d"),
         selected_unit=selected_unit,
         unit_filter_locked=unit_filter_locked,
+        can_delete_requests=_user_is_admin(),
     )
+
+
+@app.route("/logistics/api/assignees", methods=["GET"])
+@login_required
+def logistics_assignees():
+    if not _user_can_access_logistics():
+        abort(403)
+    vehicle_type = (request.args.get("vehicle_type") or "").strip()
+    request_id = (request.args.get("request_id") or "").strip()
+    db, err = _get_firestore_client()
+    if err:
+        return jsonify({"ok": False, "error": err}), 500
+    options = _logistics_assignee_options(db, vehicle_type)
+    if request_id:
+        _ref, rd, load_err = _logistics_load_vehicle_request(db, request_id)
+        if not load_err and rd:
+            current = _logistics_normalize_code(rd.get("assigned_to_code") or "")
+            options = [o for o in options if o["code"] != current]
+    return jsonify({
+        "ok": True,
+        "assignees": [{"code": o["code"], "label": o["label"]} for o in options],
+    })
+
+
+@app.route("/logistics/api/assign", methods=["POST"])
+@login_required
+def logistics_assign():
+    if not _user_can_access_logistics():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    ok, err = _logistics_assign_vehicle(
+        payload.get("request_id") or "",
+        payload.get("vehicle_type") or "",
+        payload.get("assignee_code") or "",
+        reassign=False,
+    )
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not assign"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/logistics/api/reassign", methods=["POST"])
+@login_required
+def logistics_reassign():
+    if not _user_can_access_logistics():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    ok, err = _logistics_assign_vehicle(
+        payload.get("request_id") or "",
+        payload.get("vehicle_type") or "",
+        payload.get("assignee_code") or "",
+        reassign=True,
+    )
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not re-assign"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/logistics/api/cancel", methods=["POST"])
+@login_required
+def logistics_cancel():
+    if not _user_can_access_logistics():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    ok, err = _logistics_cancel_vehicle(payload.get("request_id") or "")
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not cancel"}), 400
+    return jsonify({"ok": True})
 
 
 def _digits_only(value: str) -> str:

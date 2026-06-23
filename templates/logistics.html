@@ -1,9 +1,54 @@
 {% extends "index.html" %}
 
 {% block content %}
+<style>
+	.logistics-card {
+		box-shadow: 0 0.35rem 1rem rgba(15, 23, 42, 0.1);
+		border: 1px solid #e9ecef;
+		display: flex;
+		flex-direction: column;
+		max-height: calc(100vh - 10rem);
+		min-height: 0;
+	}
+	.logistics-scroll {
+		flex: 1 1 auto;
+		min-height: 12rem;
+		max-height: calc(100vh - 15.5rem);
+		overflow: auto;
+	}
+	.logistics-table {
+		font-size: 0.875rem;
+		margin-bottom: 0;
+		width: max-content;
+		min-width: 100%;
+	}
+	.logistics-table thead th {
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		background: #e9ecef;
+		white-space: nowrap;
+		vertical-align: middle;
+	}
+	.logistics-table tbody td {
+		vertical-align: middle;
+		white-space: nowrap;
+	}
+	.logistics-table .cell-wrap {
+		white-space: normal;
+		min-width: 8rem;
+		max-width: 14rem;
+	}
+</style>
 <div class="app-content pt-3 p-md-3 p-lg-4">
 	<div class="container-xl">
-		<div class="app-card app-card-settings shadow-sm">
+		{% if firestore_error %}
+		<div class="alert alert-warning mb-3" role="alert">
+			<strong>Could not load requests.</strong> {{ firestore_error }}
+		</div>
+		{% endif %}
+
+		<div class="app-card app-card-settings logistics-card">
 			<div class="app-card-body p-3 border-bottom">
 				<form method="get" action="{{ url_for('logistics') }}" class="d-flex flex-wrap align-items-end gap-3">
 					<div>
@@ -14,14 +59,8 @@
 						<label for="logistics-unit" class="form-label small mb-1">Unit</label>
 						{% if unit_filter_locked %}
 						<input type="hidden" name="unit" value="{{ selected_unit }}">
-						<input
-							id="logistics-unit"
-							type="text"
-							class="form-control form-control-sm bg-light"
-							value="{% if selected_unit == 'unit-ii' %}Unit II{% else %}Unit I{% endif %}"
-							readonly
-							aria-readonly="true"
-						>
+						<input id="logistics-unit" type="text" class="form-control form-control-sm bg-light"
+							value="{% if selected_unit == 'unit-ii' %}Unit II{% else %}Unit I{% endif %}" readonly>
 						{% else %}
 						<select id="logistics-unit" name="unit" class="form-select form-select-sm">
 							<option value="unit-i" {% if selected_unit == 'unit-i' %}selected{% endif %}>Unit I</option>
@@ -31,12 +70,125 @@
 					</div>
 					<div class="d-flex gap-2 align-items-center ms-auto">
 						<button type="submit" class="btn btn-sm btn-primary px-3">Refresh</button>
-						<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="logistics-refresh-today" title="Load today (IST)">Today</button>
+						<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="logistics-refresh-today">Today</button>
 					</div>
 				</form>
 			</div>
-			<div class="app-card-body p-5 text-center text-muted">
-				<p class="mb-0">Logistics dashboard coming soon.</p>
+
+			<div class="app-card-body p-0">
+				<div class="table-responsive logistics-scroll">
+					<table class="table table-hover logistics-table mb-0">
+						<thead>
+							<tr>
+								<th>Requested</th>
+								<th>Employee</th>
+								<th>Dept</th>
+								<th>From</th>
+								<th>Type</th>
+								<th>Category</th>
+								<th>Destination</th>
+								<th>Location</th>
+								<th>Load</th>
+								<th>Distance</th>
+								<th>Required At</th>
+								<th>Vehicle Type</th>
+								<th>Assignee</th>
+								<th>Status</th>
+								<th>Assigned At</th>
+								<th>Security Out</th>
+								<th>Security In</th>
+								<th>Actions</th>
+							</tr>
+						</thead>
+						<tbody>
+							{% if vehicle_requests %}
+							{% for row in vehicle_requests %}
+							<tr>
+								<td class="cell-date">{{ row.requested_date }} {{ row.requested_time }}</td>
+								<td>{{ row.employee_name|sentence_case }}<br><span class="text-muted small">{{ row.employee_id }}</span></td>
+								<td>{{ row.department|sentence_case }}</td>
+								<td>{{ row.from_unit_label|sentence_case }}</td>
+								<td>{{ row.request_type_label|sentence_case }}</td>
+								<td>{{ row.destination_category_label|sentence_case }}</td>
+								<td class="cell-wrap">{{ row.destination_label|sentence_case }}</td>
+								<td class="cell-wrap">{{ row.location_details|sentence_case or '—' }}</td>
+								<td>{{ row.load_size_label|sentence_case }}</td>
+								<td>{{ row.estimated_distance_display }}</td>
+								<td>{{ row.required_at }}</td>
+								<td>{{ row.vehicle_type_label|sentence_case }}</td>
+								<td>{{ row.assigned_to|sentence_case }}</td>
+								<td><span class="badge bg-secondary">{{ row.vehicle_status }}</span></td>
+								<td>{{ row.assigned_at }}</td>
+								<td>{{ row.security_out_at }}</td>
+								<td>{{ row.security_in_at }}</td>
+								<td>
+									<div class="d-flex flex-column gap-1">
+										{% if row.can_assign %}
+										<button type="button" class="btn btn-sm btn-primary logistics-assign-btn"
+											data-request-id="{{ row.request_id }}" data-mode="assign">Assign</button>
+										{% endif %}
+										{% if row.can_reassign %}
+										<button type="button" class="btn btn-sm btn-outline-primary logistics-assign-btn"
+											data-request-id="{{ row.request_id }}" data-mode="reassign">Re Assign</button>
+										{% endif %}
+										{% if row.can_cancel %}
+										<button type="button" class="btn btn-sm btn-outline-danger logistics-cancel-btn"
+											data-request-id="{{ row.request_id }}">Cancel</button>
+										{% endif %}
+										{% if not row.can_assign and not row.can_reassign and not row.can_cancel %}
+										<span class="text-muted small">—</span>
+										{% endif %}
+									</div>
+								</td>
+							</tr>
+							{% endfor %}
+							{% else %}
+							<tr>
+								<td colspan="18" class="text-center text-muted py-5">No vehicle requests for this date.</td>
+							</tr>
+							{% endif %}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<div class="modal fade" id="logisticsAssignModal" tabindex="-1" aria-labelledby="logisticsAssignModalLabel" aria-hidden="true">
+	<div class="modal-dialog modal-dialog-centered">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h5 class="modal-title" id="logisticsAssignModalLabel">Assign vehicle</h5>
+				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+			</div>
+			<div class="modal-body">
+				<input type="hidden" id="logistics-modal-request-id" value="">
+				<input type="hidden" id="logistics-modal-mode" value="assign">
+				<div class="mb-3">
+					<label class="form-label fw-semibold">Vehicle type</label>
+					<div class="d-flex gap-3">
+						<div class="form-check">
+							<input class="form-check-input" type="radio" name="logistics-vehicle-type" id="logistics-type-internal" value="in_house" checked>
+							<label class="form-check-label" for="logistics-type-internal">Internal</label>
+						</div>
+						<div class="form-check">
+							<input class="form-check-input" type="radio" name="logistics-vehicle-type" id="logistics-type-external" value="external_hire">
+							<label class="form-check-label" for="logistics-type-external">External</label>
+						</div>
+					</div>
+				</div>
+				<div class="mb-2">
+					<label for="logistics-assignee-select" class="form-label fw-semibold">Assignee</label>
+					<select id="logistics-assignee-select" class="form-select">
+						<option value="">Loading…</option>
+					</select>
+				</div>
+				<div class="invalid-feedback d-block" id="logistics-assign-error" style="display:none;"></div>
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+				<button type="button" class="btn btn-primary" id="logistics-assign-submit">Confirm</button>
 			</div>
 		</div>
 	</div>
@@ -47,10 +199,166 @@
 <script>
 (function () {
 	var todayBtn = document.getElementById("logistics-refresh-today");
-	if (!todayBtn) return;
-	var todayUrl = {{ url_for('logistics', unit=selected_unit) | tojson }};
-	todayBtn.addEventListener("click", function () {
-		window.location.href = todayUrl;
+	if (todayBtn) {
+		todayBtn.addEventListener("click", function () {
+			window.location.href = {{ url_for('logistics', unit=selected_unit) | tojson }};
+		});
+	}
+
+	var assigneesUrl = {{ url_for('logistics_assignees') | tojson }};
+	var assignUrl = {{ url_for('logistics_assign') | tojson }};
+	var reassignUrl = {{ url_for('logistics_reassign') | tojson }};
+	var cancelUrl = {{ url_for('logistics_cancel') | tojson }};
+
+	var modalEl = document.getElementById("logisticsAssignModal");
+	var modal = modalEl && typeof bootstrap !== "undefined"
+		? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+	var modalTitle = document.getElementById("logisticsAssignModalLabel");
+	var requestIdInput = document.getElementById("logistics-modal-request-id");
+	var modeInput = document.getElementById("logistics-modal-mode");
+	var assigneeSelect = document.getElementById("logistics-assignee-select");
+	var assignError = document.getElementById("logistics-assign-error");
+	var assignSubmit = document.getElementById("logistics-assign-submit");
+	var typeInternal = document.getElementById("logistics-type-internal");
+	var typeExternal = document.getElementById("logistics-type-external");
+
+	function showAssignError(msg) {
+		if (!assignError) return;
+		if (msg) {
+			assignError.textContent = msg;
+			assignError.style.display = "block";
+		} else {
+			assignError.textContent = "";
+			assignError.style.display = "none";
+		}
+	}
+
+	function selectedVehicleType() {
+		if (typeExternal && typeExternal.checked) return "external_hire";
+		return "in_house";
+	}
+
+	function loadAssignees() {
+		if (!assigneeSelect) return;
+		var rid = (requestIdInput && requestIdInput.value) || "";
+		var mode = (modeInput && modeInput.value) || "assign";
+		var vtype = selectedVehicleType();
+		assigneeSelect.innerHTML = '<option value="">Loading…</option>';
+		var url = assigneesUrl + "?vehicle_type=" + encodeURIComponent(vtype);
+		if (mode === "reassign" && rid) {
+			url += "&request_id=" + encodeURIComponent(rid);
+		}
+		fetch(url)
+			.then(function (r) { return r.json(); })
+			.then(function (data) {
+				if (!data.ok) {
+					assigneeSelect.innerHTML = '<option value="">No assignees</option>';
+					return;
+				}
+				var opts = data.assignees || [];
+				if (!opts.length) {
+					assigneeSelect.innerHTML = '<option value="">No assignees available</option>';
+					return;
+				}
+				assigneeSelect.innerHTML = '<option value="">Select assignee</option>' +
+					opts.map(function (o) {
+						return '<option value="' + o.code + '">' + o.label + '</option>';
+					}).join("");
+			})
+			.catch(function () {
+				assigneeSelect.innerHTML = '<option value="">Could not load</option>';
+			});
+	}
+
+	function openAssignModal(requestId, mode) {
+		if (!modal) return;
+		if (requestIdInput) requestIdInput.value = requestId || "";
+		if (modeInput) modeInput.value = mode || "assign";
+		if (modalTitle) {
+			modalTitle.textContent = mode === "reassign" ? "Re Assign vehicle" : "Assign vehicle";
+		}
+		if (typeInternal) typeInternal.checked = true;
+		showAssignError("");
+		loadAssignees();
+		modal.show();
+	}
+
+	[typeInternal, typeExternal].forEach(function (el) {
+		if (!el) return;
+		el.addEventListener("change", loadAssignees);
+	});
+
+	document.querySelectorAll(".logistics-assign-btn").forEach(function (btn) {
+		btn.addEventListener("click", function () {
+			openAssignModal(
+				this.getAttribute("data-request-id"),
+				this.getAttribute("data-mode") || "assign"
+			);
+		});
+	});
+
+	if (assignSubmit) {
+		assignSubmit.addEventListener("click", function () {
+			var rid = (requestIdInput && requestIdInput.value) || "";
+			var mode = (modeInput && modeInput.value) || "assign";
+			var code = (assigneeSelect && assigneeSelect.value) || "";
+			if (!rid || !code) {
+				showAssignError("Please select an assignee.");
+				return;
+			}
+			showAssignError("");
+			assignSubmit.disabled = true;
+			var endpoint = mode === "reassign" ? reassignUrl : assignUrl;
+			fetch(endpoint, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					request_id: rid,
+					vehicle_type: selectedVehicleType(),
+					assignee_code: code
+				})
+			})
+				.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+				.then(function (x) {
+					if (!x.ok || !x.j.ok) {
+						showAssignError((x.j && x.j.error) || "Could not save.");
+						assignSubmit.disabled = false;
+						return;
+					}
+					window.location.reload();
+				})
+				.catch(function () {
+					showAssignError("Network error.");
+					assignSubmit.disabled = false;
+				});
+		});
+	}
+
+	document.querySelectorAll(".logistics-cancel-btn").forEach(function (btn) {
+		btn.addEventListener("click", function () {
+			var rid = this.getAttribute("data-request-id");
+			if (!rid) return;
+			if (!window.confirm("Cancel this vehicle request?")) return;
+			btn.disabled = true;
+			fetch(cancelUrl, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ request_id: rid })
+			})
+				.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+				.then(function (x) {
+					if (!x.ok || !x.j.ok) {
+						alert((x.j && x.j.error) || "Could not cancel.");
+						btn.disabled = false;
+						return;
+					}
+					window.location.reload();
+				})
+				.catch(function () {
+					alert("Network error.");
+					btn.disabled = false;
+				});
+		});
 	});
 })();
 </script>
