@@ -2155,12 +2155,21 @@ def _fetch_security_vehicle_requests_inner(
         active = bool(d.get("is_active_trip"))
         out_at = d.get("security_out_at")
         in_at = d.get("security_in_at")
-        show_out = (
-            status_raw == "STARTED"
-            and active
-            and out_at is None
-        )
-        show_in = active and out_at is not None and in_at is None
+        is_internal = _is_internal_vehicle_type(d.get("vehicle_type") or "")
+        show_out = False
+        show_in = False
+        show_external_in = False
+        show_external_out = False
+        if is_internal:
+            show_out = (
+                status_raw == "STARTED"
+                and active
+                and out_at is None
+            )
+            show_in = active and out_at is not None and in_at is None
+        elif status_raw in ("ASSIGNED", "STARTED"):
+            show_external_in = out_at is None
+            show_external_out = out_at is not None and in_at is None
         rows.append(
             {
                 "request_id": d.get("request_id") or snap_id,
@@ -2170,13 +2179,17 @@ def _fetch_security_vehicle_requests_inner(
                 "destination_category_label": d.get("destination_category_label") or "",
                 "destination_label": d.get("destination_label") or "",
                 "assigned_to": d.get("assigned_to") or "—",
+                "fleet_vehicle_label": d.get("fleet_vehicle_label") or "—",
                 "required_at": d.get("required_at") or "—",
                 "vehicle_status": _vehicle_status_label(status_raw),
                 "vehicle_status_raw": status_raw,
                 "security_out_at": _format_firestore_time_ist_12h(out_at),
                 "security_in_at": _format_firestore_time_ist_12h(in_at),
+                "is_external": not is_internal,
                 "show_out": show_out,
                 "show_in": show_in,
+                "show_external_in": show_external_in,
+                "show_external_out": show_external_out,
                 "trip_closed": in_at is not None,
             }
         )
@@ -2211,8 +2224,13 @@ def fetch_security_vehicle_requests(
         return [], _firestore_user_message(e)
 
 
-def _security_record_vehicle_gate(request_id: str, action: str):
-    """Record OUT / IN for started vehicle requests (active trip only)."""
+def _security_record_vehicle_gate(
+    request_id: str,
+    action: str,
+    *,
+    vehicle_number: str | None = None,
+):
+    """Record OUT / IN for vehicle requests (internal vs external rules differ)."""
     db, err = _get_firestore_client()
     if err:
         return False, err
@@ -2233,20 +2251,49 @@ def _security_record_vehicle_gate(request_id: str, action: str):
         status = (
             d.get("vehicle_request_status") or d.get("logistics_status") or ""
         ).strip().upper()
-        if status != "STARTED" or not d.get("is_active_trip"):
-            return False, "Trip has not been started by assignee"
         out_at = d.get("security_out_at")
         in_at = d.get("security_in_at")
         now = datetime.now(timezone.utc)
-        if action == "out":
-            if out_at is not None:
-                return False, "Out time is already recorded"
-            ref.update({"security_out_at": now})
+        is_internal = _is_internal_vehicle_type(d.get("vehicle_type") or "")
+
+        if is_internal:
+            if status != "STARTED" or not d.get("is_active_trip"):
+                return False, "Trip has not been started by assignee"
+            if action == "out":
+                if out_at is not None:
+                    return False, "Out time is already recorded"
+                ref.update({"security_out_at": now})
+                return True, None
+            if in_at is not None:
+                return False, "This trip is already closed"
+            if out_at is None:
+                return False, "Record OUT before IN"
+            ref.update({
+                "security_in_at": now,
+                "is_active_trip": False,
+                "vehicle_request_status": "COMPLETED",
+            })
             return True, None
+
+        if status not in ("ASSIGNED", "STARTED"):
+            return False, "Request is not ready for security gate"
+        if action == "in":
+            if out_at is not None:
+                return False, "Vehicle OUT is already recorded"
+            digits = "".join(c for c in str(vehicle_number or "").strip() if c.isdigit())
+            if len(digits) != 4:
+                return False, "Enter a valid 4-digit vehicle number"
+            ref.update({
+                "security_out_at": now,
+                "external_vehicle_number": digits,
+                "vehicle_request_status": "STARTED",
+                "is_active_trip": True,
+            })
+            return True, None
+        if out_at is None:
+            return False, "Record vehicle IN (with number) before OUT"
         if in_at is not None:
             return False, "This trip is already closed"
-        if out_at is None:
-            return False, "Record OUT before IN"
         ref.update({
             "security_in_at": now,
             "is_active_trip": False,
@@ -2263,6 +2310,13 @@ LOGISTICS_EXTERNAL_VENDORS: tuple[tuple[str, str], ...] = (
     ("challa_transport", "Challa Transport"),
     ("sridhar_transport", "Sridhar Transport"),
     ("chella_transport", "Chella Transport"),
+)
+
+LOGISTICS_INTERNAL_FLEET: tuple[tuple[str, str], ...] = (
+    ("dost_3371", "Dost-3371"),
+    ("dost_2568", "Dost-2568"),
+    ("santro_2004", "Santro-2004"),
+    ("santa_fe_1666", "Santa FE-1666"),
 )
 
 
@@ -2335,6 +2389,18 @@ def _logistics_assignee_label(options: list[dict], code: str) -> str:
     return ""
 
 
+def _logistics_fleet_vehicle_label(code: str) -> str:
+    norm = _logistics_normalize_code(code)
+    for item_code, label in LOGISTICS_INTERNAL_FLEET:
+        if item_code == norm:
+            return label
+    return ""
+
+
+def _is_internal_vehicle_type(raw: str) -> bool:
+    return _logistics_normalize_vehicle_type(raw) == "in_house"
+
+
 def _user_can_access_logistics() -> bool:
     if not current_user.is_authenticated:
         return False
@@ -2361,6 +2427,7 @@ def _logistics_vehicle_row(d, snap_id):
         "destination_label": d.get("destination_label") or "",
         "location_details": d.get("location_details") or "",
         "vehicle_type_label": d.get("vehicle_type_label") or "—",
+        "fleet_vehicle_label": d.get("fleet_vehicle_label") or "—",
         "hire_vehicle_type_label": d.get("hire_vehicle_type_label") or "—",
         "load_size_label": d.get("load_size_label") or "",
         "estimated_distance_display": d.get("estimated_distance_display") or "—",
@@ -2428,6 +2495,7 @@ _LOGISTICS_CSV_HEADERS = (
     "Time",
     "Status",
     "Assignee",
+    "Vehicle",
     "Department",
     "Load",
     "Distance",
@@ -2463,6 +2531,7 @@ def _logistics_row_to_csv_values(row):
         _csv_cell(row.get("required_at")),
         _csv_cell(row.get("vehicle_status")),
         _csv_cell(row.get("assigned_to")),
+        _csv_cell(row.get("fleet_vehicle_label")),
         _csv_cell((row.get("department") or "").upper()),
         _csv_cell(row.get("load_size_label")),
         _csv_cell(row.get("estimated_distance_display")),
@@ -2585,6 +2654,7 @@ def _logistics_assign_vehicle(
     vehicle_type: str,
     assignee_code: str,
     *,
+    fleet_vehicle_code: str = "",
     reassign: bool = False,
 ) -> tuple[bool, str | None]:
     db, err = _get_firestore_client()
@@ -2617,6 +2687,11 @@ def _logistics_assign_vehicle(
         return False, "Choose a different assignee"
 
     is_internal = vtype == "in_house"
+    fleet_code = _logistics_normalize_code(fleet_vehicle_code) if is_internal else ""
+    fleet_label = _logistics_fleet_vehicle_label(fleet_code) if fleet_code else ""
+    if is_internal and not fleet_label:
+        return False, "Please select a vehicle"
+
     staff_wa = _logistics_staff_wa_for_code(db, code) if is_internal else ""
     now = datetime.now(timezone.utc)
     actor = (getattr(current_user, "email", None) or "logistics_portal").strip()
@@ -2634,6 +2709,8 @@ def _logistics_assign_vehicle(
         "assigned_at": now,
         "assignee_can_start": is_internal,
         "is_active_trip": False,
+        "fleet_vehicle_code": fleet_code if is_internal else "",
+        "fleet_vehicle_label": fleet_label if is_internal else "",
     }
     if reassign:
         update["previous_assignee"] = rd.get("assigned_to") or ""
@@ -5971,6 +6048,20 @@ def logistics_export():
     )
 
 
+@app.route("/logistics/api/fleet-vehicles", methods=["GET"])
+@login_required
+def logistics_fleet_vehicles():
+    if not _user_can_access_logistics():
+        abort(403)
+    return jsonify({
+        "ok": True,
+        "vehicles": [
+            {"code": code, "label": label}
+            for code, label in LOGISTICS_INTERNAL_FLEET
+        ],
+    })
+
+
 @app.route("/logistics/api/assignees", methods=["GET"])
 @login_required
 def logistics_assignees():
@@ -6003,6 +6094,7 @@ def logistics_assign():
         payload.get("request_id") or "",
         payload.get("vehicle_type") or "",
         payload.get("assignee_code") or "",
+        fleet_vehicle_code=payload.get("fleet_vehicle_code") or "",
         reassign=False,
     )
     if not ok:
@@ -6020,6 +6112,7 @@ def logistics_reassign():
         payload.get("request_id") or "",
         payload.get("vehicle_type") or "",
         payload.get("assignee_code") or "",
+        fleet_vehicle_code=payload.get("fleet_vehicle_code") or "",
         reassign=True,
     )
     if not ok:
@@ -6270,7 +6363,12 @@ def security_vehicle_gate():
     payload = request.get_json(silent=True) or {}
     request_id = (payload.get("request_id") or "").strip()
     action = (payload.get("action") or "").strip()
-    ok, err = _security_record_vehicle_gate(request_id, action)
+    vehicle_number = payload.get("vehicle_number")
+    ok, err = _security_record_vehicle_gate(
+        request_id,
+        action,
+        vehicle_number=vehicle_number,
+    )
     if not ok:
         return jsonify({"ok": False, "error": err or "Update failed"}), 400
     return jsonify({"ok": True})

@@ -172,6 +172,7 @@
 								<th>Status</th>
 								<th>Action</th>
 								<th>Assignee</th>
+								<th>Vehicle</th>
 								<th>Department</th>
 								<th>Load</th>
 								<th>Distance</th>
@@ -219,6 +220,7 @@
 									</div>
 								</td>
 								<td>{{ row.assigned_to|sentence_case }}</td>
+								<td>{{ row.fleet_vehicle_label|sentence_case }}</td>
 								<td class="cell-dept">{{ row.department }}</td>
 								<td>{{ row.load_size_label|sentence_case }}</td>
 								<td>{{ row.estimated_distance_display }}</td>
@@ -231,7 +233,7 @@
 							{% endfor %}
 							{% else %}
 							<tr>
-								<td colspan="{% if can_delete_requests %}19{% else %}18{% endif %}" class="text-center text-muted py-5">No vehicle requests for this date.</td>
+								<td colspan="{% if can_delete_requests %}20{% else %}19{% endif %}" class="text-center text-muted py-5">No vehicle requests for this date.</td>
 							</tr>
 							{% endif %}
 						</tbody>
@@ -304,6 +306,12 @@
 					<label for="logistics-assignee-select" class="form-label fw-semibold">Assignee</label>
 					<select id="logistics-assignee-select" class="form-select">
 						<option value="">Loading…</option>
+					</select>
+				</div>
+				<div class="mb-2" id="logistics-fleet-wrap" style="display: none;">
+					<label for="logistics-fleet-vehicle-select" class="form-label fw-semibold">Vehicle</label>
+					<select id="logistics-fleet-vehicle-select" class="form-select">
+						<option value="">Select vehicle</option>
 					</select>
 				</div>
 				<div class="invalid-feedback d-block" id="logistics-assign-error" style="display:none;"></div>
@@ -386,6 +394,7 @@
 	}
 
 	var assigneesUrl = {{ url_for('logistics_assignees') | tojson }};
+	var fleetVehiclesUrl = {{ url_for('logistics_fleet_vehicles') | tojson }};
 	var assignUrl = {{ url_for('logistics_assign') | tojson }};
 	var reassignUrl = {{ url_for('logistics_reassign') | tojson }};
 	var cancelUrl = {{ url_for('logistics_cancel') | tojson }};
@@ -401,6 +410,9 @@
 	var assignSubmit = document.getElementById("logistics-assign-submit");
 	var typeInternal = document.getElementById("logistics-type-internal");
 	var typeExternal = document.getElementById("logistics-type-external");
+	var fleetWrap = document.getElementById("logistics-fleet-wrap");
+	var fleetSelect = document.getElementById("logistics-fleet-vehicle-select");
+	var fleetVehiclesLoaded = false;
 
 	function showAssignError(msg) {
 		if (!assignError) return;
@@ -416,6 +428,38 @@
 	function selectedVehicleType() {
 		if (typeExternal && typeExternal.checked) return "external_hire";
 		return "in_house";
+	}
+
+	function updateFleetVisibility() {
+		var internal = selectedVehicleType() === "in_house";
+		if (fleetWrap) fleetWrap.style.display = internal ? "block" : "none";
+		if (!internal && fleetSelect) fleetSelect.value = "";
+	}
+
+	function loadFleetVehicles() {
+		if (!fleetSelect || fleetVehiclesLoaded) {
+			updateFleetVisibility();
+			return;
+		}
+		fleetSelect.innerHTML = '<option value="">Loading…</option>';
+		fetch(fleetVehiclesUrl)
+			.then(function (r) { return r.json(); })
+			.then(function (data) {
+				if (!data.ok) {
+					fleetSelect.innerHTML = '<option value="">No vehicles</option>';
+					return;
+				}
+				var opts = data.vehicles || [];
+				fleetSelect.innerHTML = '<option value="">Select vehicle</option>' +
+					opts.map(function (o) {
+						return '<option value="' + o.code + '">' + o.label + '</option>';
+					}).join("");
+				fleetVehiclesLoaded = true;
+				updateFleetVisibility();
+			})
+			.catch(function () {
+				fleetSelect.innerHTML = '<option value="">Could not load</option>';
+			});
 	}
 
 	function loadAssignees() {
@@ -458,6 +502,9 @@
 			modalTitle.textContent = mode === "reassign" ? "Re Assign vehicle" : "Assign vehicle";
 		}
 		if (typeInternal) typeInternal.checked = true;
+		if (fleetSelect) fleetSelect.value = "";
+		updateFleetVisibility();
+		loadFleetVehicles();
 		showAssignError("");
 		loadAssignees();
 		modal.show();
@@ -465,7 +512,10 @@
 
 	[typeInternal, typeExternal].forEach(function (el) {
 		if (!el) return;
-		el.addEventListener("change", loadAssignees);
+		el.addEventListener("change", function () {
+			updateFleetVisibility();
+			loadAssignees();
+		});
 	});
 
 	document.querySelectorAll(".logistics-assign-btn").forEach(function (btn) {
@@ -486,17 +536,28 @@
 				showAssignError("Please select an assignee.");
 				return;
 			}
+			var vtype = selectedVehicleType();
+			var fleetCode = "";
+			if (vtype === "in_house") {
+				fleetCode = (fleetSelect && fleetSelect.value) || "";
+				if (!fleetCode) {
+					showAssignError("Please select a vehicle.");
+					return;
+				}
+			}
 			showAssignError("");
 			assignSubmit.disabled = true;
 			var endpoint = mode === "reassign" ? reassignUrl : assignUrl;
+			var payload = {
+				request_id: rid,
+				vehicle_type: vtype,
+				assignee_code: code
+			};
+			if (fleetCode) payload.fleet_vehicle_code = fleetCode;
 			fetch(endpoint, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					request_id: rid,
-					vehicle_type: selectedVehicleType(),
-					assignee_code: code
-				})
+				body: JSON.stringify(payload)
 			})
 				.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
 				.then(function (x) {

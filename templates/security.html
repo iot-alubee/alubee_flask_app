@@ -760,13 +760,17 @@
 							<td class="cell">{{ row.assigned_to|sentence_case }}</td>
 							<td class="cell cell-date">{{ row.required_at }}</td>
 							<td class="cell">{{ row.vehicle_status }}</td>
-							<td class="cell cell-freeze-action">
+								<td class="cell cell-freeze-action">
 								{% if row.trip_closed %}
 								<button type="button" class="btn btn-sm btn-secondary" disabled>Closed</button>
-								{% elif row.show_in %}
-								<button type="button" class="btn btn-sm btn-success vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="in">IN</button>
+								{% elif row.is_external and row.show_external_in %}
+								<button type="button" class="btn btn-sm btn-success vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="in" data-requires-vehicle-number="true">IN</button>
+								{% elif row.is_external and row.show_external_out %}
+								<button type="button" class="btn btn-sm btn-primary vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="out">OUT</button>
 								{% elif row.show_out %}
 								<button type="button" class="btn btn-sm btn-primary vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="out">OUT</button>
+								{% elif row.show_in %}
+								<button type="button" class="btn btn-sm btn-success vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="in">IN</button>
 								{% else %}
 								<span class="text-muted small">—</span>
 								{% endif %}
@@ -1083,6 +1087,27 @@
 					<div class="modal-footer">
 						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
 						<button type="button" class="btn btn-primary" id="od-odo-submit">Save</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="externalVehicleModal" tabindex="-1" aria-labelledby="externalVehicleModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title" id="externalVehicleModalLabel">External vehicle IN</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body">
+						<p class="text-muted small mb-3">Enter the last 4 digits of the external vehicle number to record OUT.</p>
+						<label for="external-vehicle-number-input" class="form-label fw-semibold">Vehicle number (4 digits)</label>
+						<input type="text" class="form-control" id="external-vehicle-number-input" maxlength="4" inputmode="numeric" pattern="[0-9]{4}" placeholder="e.g. 3371" autocomplete="off">
+						<div class="invalid-feedback d-block" id="external-vehicle-number-error" style="display: none;"></div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+						<button type="button" class="btn btn-primary" id="external-vehicle-number-submit">Save</button>
 					</div>
 				</div>
 			</div>
@@ -1615,12 +1640,32 @@
 	});
 
 	var vehicleGateEndpoint = {{ url_for('security_vehicle_gate') | tojson }};
+	var externalVehicleModalEl = document.getElementById("externalVehicleModal");
+	var externalVehicleModal = externalVehicleModalEl && typeof bootstrap !== "undefined"
+		? bootstrap.Modal.getOrCreateInstance(externalVehicleModalEl) : null;
+	var externalVehicleInput = document.getElementById("external-vehicle-number-input");
+	var externalVehicleError = document.getElementById("external-vehicle-number-error");
+	var externalVehicleSubmit = document.getElementById("external-vehicle-number-submit");
+	var pendingVehicleGate = null;
 
-	function postVehicleGate(requestId, action, onError) {
+	function showExternalVehicleError(msg) {
+		if (!externalVehicleError) return;
+		if (msg) {
+			externalVehicleError.textContent = msg;
+			externalVehicleError.style.display = "block";
+		} else {
+			externalVehicleError.textContent = "";
+			externalVehicleError.style.display = "none";
+		}
+	}
+
+	function postVehicleGate(requestId, action, vehicleNumber, onError) {
+		var body = { request_id: requestId, action: action };
+		if (vehicleNumber) body.vehicle_number = vehicleNumber;
 		return fetch(vehicleGateEndpoint, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ request_id: requestId, action: action }),
+			body: JSON.stringify(body),
 		})
 			.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
 			.then(function (x) {
@@ -1641,14 +1686,75 @@
 		btn.addEventListener("click", function () {
 			var requestId = this.getAttribute("data-request-id");
 			var action = this.getAttribute("data-action");
+			var requiresVehicleNumber = this.getAttribute("data-requires-vehicle-number") === "true";
 			if (!requestId || !action) return;
+
+			if (requiresVehicleNumber) {
+				pendingVehicleGate = { requestId: requestId, action: action, btn: btn };
+				if (externalVehicleInput) {
+					externalVehicleInput.value = "";
+					externalVehicleInput.classList.remove("is-invalid");
+				}
+				showExternalVehicleError("");
+				if (externalVehicleSubmit) externalVehicleSubmit.disabled = false;
+				if (externalVehicleModal) {
+					externalVehicleModal.show();
+					setTimeout(function () { if (externalVehicleInput) externalVehicleInput.focus(); }, 300);
+				} else {
+					var fallback = prompt("Enter 4-digit vehicle number:");
+					if (fallback === null) return;
+					btn.disabled = true;
+					postVehicleGate(requestId, action, fallback.trim(), function (msg) {
+						alert(msg);
+						btn.disabled = false;
+					});
+				}
+				return;
+			}
+
 			btn.disabled = true;
-			postVehicleGate(requestId, action, function (msg) {
+			postVehicleGate(requestId, action, null, function (msg) {
 				alert(msg);
 				btn.disabled = false;
 			});
 		});
 	});
+
+	if (externalVehicleSubmit) {
+		externalVehicleSubmit.addEventListener("click", function () {
+			if (!pendingVehicleGate) return;
+			var digits = (externalVehicleInput && externalVehicleInput.value || "").replace(/\D/g, "");
+			if (digits.length !== 4) {
+				showExternalVehicleError("Enter exactly 4 digits.");
+				if (externalVehicleInput) externalVehicleInput.classList.add("is-invalid");
+				return;
+			}
+			showExternalVehicleError("");
+			externalVehicleSubmit.disabled = true;
+			if (pendingVehicleGate.btn) pendingVehicleGate.btn.disabled = true;
+			postVehicleGate(
+				pendingVehicleGate.requestId,
+				pendingVehicleGate.action,
+				digits,
+				function (msg) {
+					showExternalVehicleError(msg);
+					externalVehicleSubmit.disabled = false;
+					if (pendingVehicleGate && pendingVehicleGate.btn) {
+						pendingVehicleGate.btn.disabled = false;
+					}
+				}
+			).then(function (ok) {
+				if (ok && externalVehicleModal) externalVehicleModal.hide();
+			});
+		});
+	}
+
+	if (externalVehicleModalEl) {
+		externalVehicleModalEl.addEventListener("hidden.bs.modal", function () {
+			pendingVehicleGate = null;
+			showExternalVehicleError("");
+		});
+	}
 
 	document.querySelectorAll(".od-gate-btn").forEach(function (btn) {
 		btn.addEventListener("click", function () {
