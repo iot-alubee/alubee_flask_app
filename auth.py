@@ -16,7 +16,7 @@ _PASSWORD_HASH_METHOD = "pbkdf2:sha256"
 # Page keys used for viewer permissions (must match route names / active_nav)
 PAGE_KEYS = [
     ("production", "Production"),
-    ("ppc", "PPC"),
+    ("ppc", "Capacity Analyser"),
     ("iot", "IoT"),
     ("realtime", "Realtime"),
     ("consumables", "Consumables"),

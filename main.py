@@ -1,4 +1,7 @@
-from flask import Flask, render_template, redirect, url_for, request, flash, abort, jsonify
+import csv
+import io
+
+from flask import Flask, render_template, redirect, url_for, request, flash, abort, jsonify, Response
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -90,7 +93,18 @@ _VIEWER_LANDING_ROUTES = {
     "hr": "hr",
     "it": "it",
     "logistics": "logistics",
+    "maintenance": "logistics",
 }
+
+_BUILTIN_EMAIL_LANDING_PAGES = {
+    SECURITY_UNIT_I_EMAIL: "security",
+    SECURITY_UNIT_II_EMAIL: "security",
+    HR_SECURITY_EMAIL: "hr",
+    IT_EMAIL: "it",
+    LOGISTICS_EMAIL: "logistics",
+}
+
+_PORTAL_LANDING_PAGE_KEYS = ("security", "hr", "it", "logistics", "maintenance")
 
 
 def _ensure_builtin_viewer_user(email: str, password: str, pages: tuple[str, ...]) -> None:
@@ -744,17 +758,32 @@ def load_user(user_id):
     return User.get(user_id)
 
 
+def _landing_url_for_page(page_key: str) -> str:
+    route = _VIEWER_LANDING_ROUTES.get(page_key)
+    if not route:
+        return url_for("index")
+    if page_key == "maintenance":
+        return url_for(route, tab="maintenance")
+    return url_for(route)
+
+
 def _login_landing_url(user: User) -> str:
-    """Where to send the user after login (single-tab viewers → their page)."""
-    email = (user.email or "").strip().lower()
-    if email in (SECURITY_UNIT_I_EMAIL, SECURITY_UNIT_II_EMAIL):
-        return url_for("security")
-    if (user.role or "").strip().lower() == "viewer":
+    """Where to send the user after login."""
+    role = (user.role or "").strip().lower()
+    if role in ("admin", "editor"):
+        return url_for("index")
+
+    if role == "viewer":
+        email = (user.email or "").strip().lower()
+        builtin_page = _BUILTIN_EMAIL_LANDING_PAGES.get(email)
+        if builtin_page:
+            return _landing_url_for_page(builtin_page)
+
         pages = list(user.allowed_pages or [])
-        if len(pages) == 1:
-            route = _VIEWER_LANDING_ROUTES.get(pages[0])
-            if route:
-                return url_for(route)
+        portal_pages = [p for p in pages if p in _PORTAL_LANDING_PAGE_KEYS]
+        if len(portal_pages) == 1:
+            return _landing_url_for_page(portal_pages[0])
+
     return url_for("index")
 
 
@@ -2316,78 +2345,144 @@ def _user_can_access_logistics() -> bool:
     return "logistics" in pages
 
 
+def _logistics_vehicle_row(d, snap_id):
+    status_raw = _logistics_vehicle_status_raw(d)
+    trip_started = _logistics_vehicle_trip_started(d)
+    return {
+        "request_id": d.get("request_id") or snap_id,
+        "requested_date": _format_firestore_date_ist(d.get("requested_datetime")),
+        "requested_time": _format_firestore_time_ist_12h(d.get("requested_datetime")),
+        "employee_id": d.get("employee_id") or "",
+        "employee_name": d.get("employee_name") or "",
+        "department": d.get("department") or "",
+        "from_unit_label": d.get("from_unit_label") or "—",
+        "request_type_label": d.get("request_type_label") or "",
+        "destination_category_label": d.get("destination_category_label") or "",
+        "destination_label": d.get("destination_label") or "",
+        "location_details": d.get("location_details") or "",
+        "vehicle_type_label": d.get("vehicle_type_label") or "—",
+        "hire_vehicle_type_label": d.get("hire_vehicle_type_label") or "—",
+        "load_size_label": d.get("load_size_label") or "",
+        "estimated_distance_display": d.get("estimated_distance_display") or "—",
+        "required_at": d.get("required_at") or "—",
+        "required_time": d.get("required_time") or "",
+        "assigned_to": d.get("assigned_to") or "—",
+        "assigned_to_code": d.get("assigned_to_code") or "",
+        "vehicle_status": _vehicle_status_label(status_raw),
+        "vehicle_status_raw": status_raw,
+        "security_out_at": _format_firestore_time_ist_12h(d.get("security_out_at")) or "—",
+        "security_in_at": _format_firestore_time_ist_12h(d.get("security_in_at")) or "—",
+        "assigned_at": _format_firestore_time_ist_12h(d.get("assigned_at")) or "—",
+        "can_assign": status_raw == "PENDING",
+        "can_reassign": status_raw == "ASSIGNED" and not trip_started,
+        "can_cancel": status_raw in ("PENDING", "ASSIGNED") and not trip_started,
+    }
+
+
 def _fetch_logistics_vehicle_requests_inner(
-    ist_day,
     db,
     *,
+    ist_day=None,
+    ist_day_from=None,
+    ist_day_to=None,
     jmd_route_filter: str | None = None,
+    limit=300,
 ):
     buf = []
+    use_range = ist_day_from is not None or ist_day_to is not None
+    day_from = day_to = None
+    if use_range:
+        day_from = ist_day_from or ist_day_to
+        day_to = ist_day_to or ist_day_from
+        if day_from > day_to:
+            day_from, day_to = day_to, day_from
     for snap in _security_requests_snapshots(db, "VEHICLE_REQUEST"):
         d = snap.to_dict() or {}
         ts = d.get("requested_datetime")
+        req_day = _requested_datetime_ist_date(ts)
         if ist_day is not None:
-            if _requested_datetime_ist_date(ts) != ist_day:
+            if req_day != ist_day:
+                continue
+        elif use_range:
+            if req_day is None:
+                continue
+            if req_day < day_from or req_day > day_to:
                 continue
         if jmd_route_filter and not _vehicle_matches_unit_filter(d, jmd_route_filter):
             continue
         buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
 
     buf.sort(key=lambda x: x[0], reverse=True)
-    buf = buf[:300]
-    rows = []
-    for _, d, snap_id in buf:
-        status_raw = _logistics_vehicle_status_raw(d)
-        trip_started = _logistics_vehicle_trip_started(d)
-        rows.append({
-            "request_id": d.get("request_id") or snap_id,
-            "requested_date": _format_firestore_date_ist(d.get("requested_datetime")),
-            "requested_time": _format_firestore_time_ist_12h(d.get("requested_datetime")),
-            "employee_id": d.get("employee_id") or "",
-            "employee_name": d.get("employee_name") or "",
-            "department": d.get("department") or "",
-            "from_unit_label": d.get("from_unit_label") or "—",
-            "request_type_label": d.get("request_type_label") or "",
-            "destination_category_label": d.get("destination_category_label") or "",
-            "destination_label": d.get("destination_label") or "",
-            "location_details": d.get("location_details") or "",
-            "vehicle_type_label": d.get("vehicle_type_label") or "—",
-            "hire_vehicle_type_label": d.get("hire_vehicle_type_label") or "—",
-            "load_size_label": d.get("load_size_label") or "",
-            "estimated_distance_display": d.get("estimated_distance_display") or "—",
-            "required_at": d.get("required_at") or "—",
-            "required_time": d.get("required_time") or "",
-            "assigned_to": d.get("assigned_to") or "—",
-            "assigned_to_code": d.get("assigned_to_code") or "",
-            "vehicle_status": _vehicle_status_label(status_raw),
-            "vehicle_status_raw": status_raw,
-            "security_out_at": _format_firestore_time_ist_12h(d.get("security_out_at")) or "—",
-            "security_in_at": _format_firestore_time_ist_12h(d.get("security_in_at")) or "—",
-            "assigned_at": _format_firestore_time_ist_12h(d.get("assigned_at")) or "—",
-            "can_assign": status_raw == "PENDING",
-            "can_reassign": status_raw == "ASSIGNED" and not trip_started,
-            "can_cancel": status_raw in ("PENDING", "ASSIGNED") and not trip_started,
-        })
-    return rows
+    if limit is not None:
+        buf = buf[:limit]
+    return [_logistics_vehicle_row(d, snap_id) for _, d, snap_id in buf]
 
 
-def fetch_logistics_vehicle_requests(
-    ist_day=None,
-    *,
-    jmd_route_filter: str | None = None,
-):
+_LOGISTICS_CSV_HEADERS = (
+    "Employee",
+    "From",
+    "Type",
+    "Category",
+    "Destination",
+    "Location",
+    "Time",
+    "Status",
+    "Assignee",
+    "Department",
+    "Load",
+    "Distance",
+    "Requested",
+    "Vehicle Type",
+    "Assigned At",
+    "Security Out",
+    "Security In",
+)
+
+
+def _csv_cell(value):
+    """Plain ASCII-safe CSV cell; empty instead of UI em-dash placeholders."""
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if not s or s == "—":
+        return ""
+    return s
+
+
+def _logistics_row_to_csv_values(row):
+    requested = " ".join(
+        p for p in (row.get("requested_date") or "", row.get("requested_time") or "") if p
+    ).strip()
+    return [
+        _csv_cell(row.get("employee_name")),
+        _csv_cell(row.get("from_unit_label")),
+        _csv_cell(row.get("request_type_label")),
+        _csv_cell(row.get("destination_category_label")),
+        _csv_cell(row.get("destination_label")),
+        _csv_cell(row.get("location_details")),
+        _csv_cell(row.get("required_at")),
+        _csv_cell(row.get("vehicle_status")),
+        _csv_cell(row.get("assigned_to")),
+        _csv_cell((row.get("department") or "").upper()),
+        _csv_cell(row.get("load_size_label")),
+        _csv_cell(row.get("estimated_distance_display")),
+        _csv_cell(requested),
+        _csv_cell(row.get("vehicle_type_label")),
+        _csv_cell(row.get("assigned_at")),
+        _csv_cell(row.get("security_out_at")),
+        _csv_cell(row.get("security_in_at")),
+    ]
+
+
+def _fetch_logistics_vehicle_requests_with_timeout(**kwargs):
     db, err = _get_firestore_client()
     if err:
         return [], err
+    timeout = 60 if kwargs.get("ist_day_from") or kwargs.get("ist_day_to") else 25
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(
-                _fetch_logistics_vehicle_requests_inner,
-                ist_day,
-                db,
-                jmd_route_filter=jmd_route_filter,
-            )
-            return future.result(timeout=25), None
+            future = executor.submit(_fetch_logistics_vehicle_requests_inner, db, **kwargs)
+            return future.result(timeout=timeout), None
     except TimeoutError:
         app.logger.error("Firestore logistics vehicle fetch timed out")
         return [], (
@@ -2397,6 +2492,31 @@ def fetch_logistics_vehicle_requests(
     except Exception as e:
         app.logger.exception("Firestore logistics vehicle fetch failed")
         return [], _firestore_user_message(e)
+
+
+def fetch_logistics_vehicle_requests(
+    ist_day=None,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    return _fetch_logistics_vehicle_requests_with_timeout(
+        ist_day=ist_day,
+        jmd_route_filter=jmd_route_filter,
+    )
+
+
+def fetch_logistics_vehicle_requests_range(
+    ist_day_from,
+    ist_day_to,
+    *,
+    jmd_route_filter: str | None = None,
+):
+    return _fetch_logistics_vehicle_requests_with_timeout(
+        ist_day_from=ist_day_from,
+        ist_day_to=ist_day_to,
+        jmd_route_filter=jmd_route_filter,
+        limit=10000,
+    )
 
 
 def _logistics_load_vehicle_request(db, request_id: str):
@@ -3149,7 +3269,9 @@ def inject_nav_permissions():
             "show_security_nav": _show("security"),
             "show_hr_nav": _show("hr"),
             "show_it_nav": _show("it"),
-            "show_logistics_nav": _show("logistics"),
+            "show_ppc_nav": _show("logistics") or _show("maintenance"),
+            "show_logistics_subnav": _show("logistics"),
+            "show_maintenance_subnav": _show("maintenance"),
             "iot_health_monitoring_enabled": IOT_HEALTH_MONITORING_ENABLED,
         }
     return {
@@ -3159,7 +3281,9 @@ def inject_nav_permissions():
         "show_security_nav": False,
         "show_hr_nav": False,
         "show_it_nav": False,
-        "show_logistics_nav": False,
+        "show_ppc_nav": False,
+        "show_logistics_subnav": False,
+        "show_maintenance_subnav": False,
         "iot_health_monitoring_enabled": IOT_HEALTH_MONITORING_ENABLED,
     }
 
@@ -5625,7 +5749,61 @@ def ppc_deny_switch_request():
 @login_required
 def maintenance():
     require_page("maintenance")
-    return render_template("under_development.html", active_nav="maintenance")
+    return redirect(url_for("logistics", tab="maintenance"))
+
+
+PPC_SECTION_TABS = (
+    ("logistics", "Logistics"),
+    ("maintenance", "Maintenance"),
+)
+
+
+def _ppc_tabs_for_user() -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (key, label)
+        for key, label in PPC_SECTION_TABS
+        if _user_can_access_page(key)
+    )
+
+
+def _user_can_access_page(page_key: str) -> bool:
+    if not current_user.is_authenticated:
+        return False
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role in ("admin", "editor"):
+        return True
+    pages = getattr(current_user, "allowed_pages", None) or []
+    return page_key in pages
+
+
+def _render_ppc_page(tab: str):
+    tabs = _ppc_tabs_for_user()
+    allowed = {k for k, _ in tabs}
+    if not allowed:
+        abort(403)
+    tab = (tab or "logistics").strip().lower()
+    if tab not in allowed:
+        tab = tabs[0][0]
+    require_page(tab)
+    ist_today = _ist_today_date()
+    selected_day = _parse_security_table_date(request.args.get("date"), ist_today)
+    vehicle_requests = []
+    firestore_error = None
+    if tab == "logistics":
+        vehicle_requests, firestore_error = fetch_logistics_vehicle_requests(
+            ist_day=selected_day,
+            jmd_route_filter=None,
+        )
+    return render_template(
+        "ppc.html",
+        active_nav="ppc_hub",
+        ppc_tabs=tabs,
+        selected_tab=tab,
+        vehicle_requests=vehicle_requests,
+        firestore_error=firestore_error,
+        selected_date_iso=selected_day.strftime("%Y-%m-%d"),
+        can_delete_requests=_user_is_admin(),
+    )
 
 
 @app.route("/documents")
@@ -5764,24 +5942,32 @@ def it():
 @app.route("/logistics")
 @login_required
 def logistics():
+    tab = (request.args.get("tab") or "logistics").strip().lower()
+    return _render_ppc_page(tab)
+
+
+@app.route("/logistics/export")
+@login_required
+def logistics_export():
     require_page("logistics")
     ist_today = _ist_today_date()
-    selected_day = _parse_security_table_date(request.args.get("date"), ist_today)
-    selected_unit, unit_filter_locked = _security_unit_for_session(request.args.get("unit"))
-    jmd_route_filter = _parse_security_unit_filter(selected_unit)
-    vehicle_requests, firestore_error = fetch_logistics_vehicle_requests(
-        ist_day=selected_day,
-        jmd_route_filter=jmd_route_filter,
-    )
-    return render_template(
-        "logistics.html",
-        active_nav="logistics",
-        vehicle_requests=vehicle_requests,
-        firestore_error=firestore_error,
-        selected_date_iso=selected_day.strftime("%Y-%m-%d"),
-        selected_unit=selected_unit,
-        unit_filter_locked=unit_filter_locked,
-        can_delete_requests=_user_is_admin(),
+    from_day = _parse_security_table_date(request.args.get("from"), ist_today)
+    to_day = _parse_security_table_date(request.args.get("to"), ist_today)
+    if from_day > to_day:
+        from_day, to_day = to_day, from_day
+    rows, err = fetch_logistics_vehicle_requests_range(from_day, to_day)
+    if err:
+        abort(400, err)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(_LOGISTICS_CSV_HEADERS)
+    for row in rows:
+        writer.writerow(_logistics_row_to_csv_values(row))
+    filename = f"vehicle_requests_{from_day.isoformat()}_{to_day.isoformat()}.csv"
+    return Response(
+        "\ufeff" + output.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
