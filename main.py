@@ -1051,6 +1051,23 @@ def _md_whatsapp_for_security(db) -> str:
     return _wa_id_from_env("MD_WHATSAPP_NUMBER")
 
 
+def _jmd_whatsapp_for_vehicle_unit(d: dict) -> str:
+    """Unit I → JMD I; Unit II → JMD II (from vehicle request ``from_unit``)."""
+    route = _vehicle_from_unit_jmd_route(d)
+    if route == "JMD2":
+        return _wa_id_from_env("JMD_II_WHATSAPP_NUMBER")
+    return _wa_id_from_env("JMD_I_WHATSAPP_NUMBER", "JMD_WHATSAPP_NUMBER")
+
+
+def _normalize_indian_vehicle_plate(raw: str) -> str | None:
+    """Validate and format Indian plate (e.g. TN56K5951 → TN 56 K 5951)."""
+    compact = re.sub(r"[^A-Za-z0-9]", "", (raw or "")).upper()
+    m = re.match(r"^([A-Z]{2})(\d{2})([A-Z]{1,2})(\d{4})$", compact)
+    if not m:
+        return None
+    return f"{m.group(1)} {m.group(2)} {m.group(3)} {m.group(4)}"
+
+
 def _approver_is_offline(db, wa_id: str) -> bool:
     """True only when approver_status explicitly set to offline (missing doc = online)."""
     if not db or not wa_id:
@@ -2230,24 +2247,28 @@ def _security_record_vehicle_gate(
     *,
     vehicle_number: str | None = None,
 ):
-    """Record OUT / IN for vehicle requests (internal vs external rules differ)."""
+    """Record OUT / IN for vehicle requests (internal vs external rules differ).
+
+    Returns (ok, error, notify_ctx) where notify_ctx is set only for internal OUT
+    or external IN (WhatsApp to unit JMD + MD).
+    """
     db, err = _get_firestore_client()
     if err:
-        return False, err
+        return False, err, None
     action = (action or "").strip().lower()
     if action not in ("out", "in"):
-        return False, "Invalid action"
+        return False, "Invalid action", None
     rid = (request_id or "").strip()
     if not rid:
-        return False, "Missing request id"
+        return False, "Missing request id", None
     try:
         ref = db.collection("requests").document(rid)
         snap = ref.get()
         if not snap.exists:
-            return False, "Request not found"
+            return False, "Request not found", None
         d = snap.to_dict() or {}
         if (d.get("type") or "").strip().upper() not in ("VEHICLE_REQUEST", "LOGISTICS"):
-            return False, "Not a vehicle request"
+            return False, "Not a vehicle request", None
         status = (
             d.get("vehicle_request_status") or d.get("logistics_status") or ""
         ).strip().upper()
@@ -2255,54 +2276,63 @@ def _security_record_vehicle_gate(
         in_at = d.get("security_in_at")
         now = datetime.now(timezone.utc)
         is_internal = _is_internal_vehicle_type(d.get("vehicle_type") or "")
+        notify_ctx = None
 
         if is_internal:
             if status != "STARTED" or not d.get("is_active_trip"):
-                return False, "Trip has not been started by assignee"
+                return False, "Trip has not been started by assignee", None
             if action == "out":
                 if out_at is not None:
-                    return False, "Out time is already recorded"
-                ref.update({"security_out_at": now})
-                return True, None
+                    return False, "Out time is already recorded", None
+                update = {"security_out_at": now}
+                ref.update(update)
+                merged = {**d, **update, "request_id": d.get("request_id") or rid}
+                notify_ctx = {"event": "out", "rd": merged, "vehicle_number": ""}
+                return True, None, notify_ctx
             if in_at is not None:
-                return False, "This trip is already closed"
+                return False, "This trip is already closed", None
             if out_at is None:
-                return False, "Record OUT before IN"
+                return False, "Record OUT before IN", None
             ref.update({
                 "security_in_at": now,
                 "is_active_trip": False,
                 "vehicle_request_status": "COMPLETED",
             })
-            return True, None
+            return True, None, None
 
         if status not in ("ASSIGNED", "STARTED"):
-            return False, "Request is not ready for security gate"
+            return False, "Request is not ready for security gate", None
         if action == "in":
             if out_at is not None:
-                return False, "Vehicle OUT is already recorded"
-            digits = "".join(c for c in str(vehicle_number or "").strip() if c.isdigit())
-            if len(digits) != 4:
-                return False, "Enter a valid 4-digit vehicle number"
-            ref.update({
+                return False, "Vehicle IN is already recorded", None
+            plate = _normalize_indian_vehicle_plate(str(vehicle_number or ""))
+            if not plate:
+                return False, (
+                    "Enter a valid vehicle number (e.g. TN 56 K 5951)"
+                ), None
+            update = {
                 "security_out_at": now,
-                "external_vehicle_number": digits,
+                "external_vehicle_number": plate,
                 "vehicle_request_status": "STARTED",
                 "is_active_trip": True,
-            })
-            return True, None
+            }
+            ref.update(update)
+            merged = {**d, **update, "request_id": d.get("request_id") or rid}
+            notify_ctx = {"event": "in", "rd": merged, "vehicle_number": plate}
+            return True, None, notify_ctx
         if out_at is None:
-            return False, "Record vehicle IN (with number) before OUT"
+            return False, "Record vehicle IN (with number) before OUT", None
         if in_at is not None:
-            return False, "This trip is already closed"
+            return False, "This trip is already closed", None
         ref.update({
             "security_in_at": now,
             "is_active_trip": False,
             "vehicle_request_status": "COMPLETED",
         })
-        return True, None
+        return True, None, None
     except Exception as e:
         app.logger.exception("security vehicle gate update failed")
-        return False, str(e)
+        return False, str(e), None
 
 
 LOGISTICS_EXTERNAL_VENDORS: tuple[tuple[str, str], ...] = (
@@ -6364,13 +6394,24 @@ def security_vehicle_gate():
     request_id = (payload.get("request_id") or "").strip()
     action = (payload.get("action") or "").strip()
     vehicle_number = payload.get("vehicle_number")
-    ok, err = _security_record_vehicle_gate(
+    ok, err, notify_ctx = _security_record_vehicle_gate(
         request_id,
         action,
         vehicle_number=vehicle_number,
     )
     if not ok:
         return jsonify({"ok": False, "error": err or "Update failed"}), 400
+    if notify_ctx:
+        db, db_err = _get_firestore_client()
+        if not db_err:
+            rd = notify_ctx.get("rd") or {}
+            vehicle_notify.notify_vehicle_security_gate(
+                rd,
+                event=notify_ctx.get("event") or "",
+                jmd_wa=_jmd_whatsapp_for_vehicle_unit(rd),
+                md_wa=_md_whatsapp_for_security(db),
+                vehicle_number=notify_ctx.get("vehicle_number") or "",
+            )
     return jsonify({"ok": True})
 
 

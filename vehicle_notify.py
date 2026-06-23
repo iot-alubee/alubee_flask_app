@@ -239,12 +239,17 @@ def _assignee_template_body_fields() -> list[str]:
     raw = (
         os.getenv("VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_BODY_FIELDS")
         or os.getenv("VEHICLE_INTERNAL_ASSIGNEE_TEMPLATE_BODY_FIELDS")
-        or "assignee_name,requester,from,request_type,category,destination,time"
+        or "assignee_name,requester,from,request_type,category,destination,vehicle,time"
     ).strip()
     return [k.strip().lower() for k in raw.split(",") if k.strip()]
 
 
 def _assignee_template_values(rd: dict, assignee_name: str) -> dict[str, str]:
+    vehicle = (
+        (rd.get("fleet_vehicle_label") or "").strip()
+        or (rd.get("external_vehicle_number") or "").strip()
+        or "—"
+    )
     return {
         "assignee_name": sentence_case_name(assignee_name or "—"),
         "requester": sentence_case_name(rd.get("employee_name") or "—"),
@@ -252,6 +257,7 @@ def _assignee_template_values(rd: dict, assignee_name: str) -> dict[str, str]:
         "request_type": rd.get("request_type_label") or "—",
         "category": rd.get("destination_category_label") or "—",
         "destination": rd.get("destination_label") or "—",
+        "vehicle": vehicle,
         "time": rd.get("required_at") or "—",
     }
 
@@ -266,6 +272,7 @@ def _assignee_notify_body(rd: dict, assignee_name: str) -> str:
         f"Request Type: {v['request_type']}\n"
         f"Category: {v['category']}\n"
         f"Destination: {v['destination']}\n"
+        f"Vehicle: {v['vehicle']}\n"
         f"Time: {v['time']}\n\n"
         "Click 'Start' once you are ready!"
     )
@@ -387,3 +394,84 @@ def notify_vehicle_assignee(
         "skip vehicle assignee notify wa=%s (set VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_NAME)",
         assignee_wa,
     )
+
+
+def _vehicle_purpose_line(rd: dict) -> str:
+    req_type = (rd.get("request_type_label") or "—").strip()
+    destination = (rd.get("destination_label") or "—").strip()
+    return f"{req_type} - {destination}"
+
+
+def _vehicle_security_gate_body(
+    rd: dict,
+    *,
+    event: str,
+    vehicle_number: str = "",
+) -> str:
+    """Plain-text body for JMD/MD when security records vehicle OUT (internal) or IN (external)."""
+    header = "Vehicle OUT:" if event == "out" else "Vehicle IN:"
+    requester = sentence_case_name(rd.get("employee_name") or "—")
+    purpose = _vehicle_purpose_line(rd)
+    assignee = sentence_case_name(rd.get("assigned_to") or "—")
+    if event == "out":
+        vehicle_no = (
+            (rd.get("fleet_vehicle_label") or "").strip()
+            or (vehicle_number or "").strip()
+            or "—"
+        )
+    else:
+        vehicle_no = (
+            (vehicle_number or "").strip()
+            or (rd.get("external_vehicle_number") or "").strip()
+            or "—"
+        )
+    return (
+        f"{header}\n\n"
+        f"Requester: {requester}\n"
+        f"Purpose: {purpose}\n"
+        f"Assignee: {assignee}\n"
+        f"Vehicle No: {vehicle_no}"
+    )
+
+
+def notify_vehicle_security_gate(
+    rd: dict,
+    *,
+    event: str,
+    jmd_wa: str,
+    md_wa: str,
+    vehicle_number: str = "",
+) -> None:
+    """Notify unit JMD + MD on internal OUT or external IN (security gate)."""
+    ev = (event or "").strip().lower()
+    if ev not in ("out", "in"):
+        return
+    body = _vehicle_security_gate_body(rd, event=ev, vehicle_number=vehicle_number)
+    recipients: list[str] = []
+    for wa in (jmd_wa, md_wa):
+        wa = (wa or "").strip()
+        if not wa:
+            continue
+        key = wa.lower()
+        if key in {r.lower() for r in recipients}:
+            continue
+        recipients.append(wa)
+    if not recipients:
+        logger.warning("vehicle security gate notify skipped — no JMD/MD configured")
+        return
+    for wa in recipients:
+        try:
+            send_text(wa, body, callback_data=(rd.get("request_id") or "")[:512])
+            logger.info(
+                "vehicle security gate %s notify sent wa=%s request_id=%s",
+                ev,
+                wa,
+                rd.get("request_id") or "—",
+            )
+        except Exception:
+            logger.exception(
+                "vehicle security gate %s notify failed wa=%s request_id=%s",
+                ev,
+                wa,
+                rd.get("request_id") or "—",
+            )
