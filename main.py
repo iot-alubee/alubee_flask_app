@@ -1586,6 +1586,15 @@ def _format_distance_km(value):
     return f"{n:.2f}"
 
 
+def _vehicle_number_display(d: dict) -> str:
+    """Fleet label for internal trips; registration plate for external."""
+    ext = (d.get("external_vehicle_number") or "").strip()
+    if ext:
+        return ext
+    fleet = (d.get("fleet_vehicle_label") or "").strip()
+    return fleet or "—"
+
+
 def _request_uses_company_vehicle(d: dict) -> bool:
     """Whether this OD used a company vehicle (ODO required at gate)."""
     if not d:
@@ -2197,11 +2206,15 @@ def _fetch_security_vehicle_requests_inner(
                 "destination_label": d.get("destination_label") or "",
                 "assigned_to": d.get("assigned_to") or "—",
                 "fleet_vehicle_label": d.get("fleet_vehicle_label") or "—",
+                "vehicle_number": _vehicle_number_display(d),
                 "required_at": d.get("required_at") or "—",
                 "vehicle_status": _vehicle_status_label(status_raw),
                 "vehicle_status_raw": status_raw,
                 "security_out_at": _format_firestore_time_ist_12h(out_at),
                 "security_in_at": _format_firestore_time_ist_12h(in_at),
+                "odo_out": _format_odo_reading(d.get("odo_out")) or "—",
+                "odo_in": _format_odo_reading(d.get("odo_in")) or "—",
+                "is_internal": is_internal,
                 "is_external": not is_internal,
                 "show_out": show_out,
                 "show_in": show_in,
@@ -2246,6 +2259,7 @@ def _security_record_vehicle_gate(
     action: str,
     *,
     vehicle_number: str | None = None,
+    odo_reading=None,
 ):
     """Record OUT / IN for vehicle requests (internal vs external rules differ).
 
@@ -2284,7 +2298,10 @@ def _security_record_vehicle_gate(
             if action == "out":
                 if out_at is not None:
                     return False, "Out time is already recorded", None
-                update = {"security_out_at": now}
+                odo, odo_err = _parse_odo_reading(odo_reading)
+                if odo_err:
+                    return False, odo_err, None
+                update = {"security_out_at": now, "odo_out": odo}
                 ref.update(update)
                 merged = {**d, **update, "request_id": d.get("request_id") or rid}
                 notify_ctx = {"event": "out", "rd": merged, "vehicle_number": ""}
@@ -2293,11 +2310,28 @@ def _security_record_vehicle_gate(
                 return False, "This trip is already closed", None
             if out_at is None:
                 return False, "Record OUT before IN", None
-            ref.update({
+            odo, odo_err = _parse_odo_reading(odo_reading)
+            if odo_err:
+                return False, odo_err, None
+            odo_out = d.get("odo_out")
+            if odo_out is not None:
+                try:
+                    if odo < float(odo_out):
+                        return False, "ODO at IN cannot be less than ODO at OUT", None
+                except (TypeError, ValueError):
+                    pass
+            update = {
                 "security_in_at": now,
                 "is_active_trip": False,
                 "vehicle_request_status": "COMPLETED",
-            })
+                "odo_in": odo,
+            }
+            if odo_out is not None:
+                try:
+                    update["distance_km"] = round(odo - float(odo_out), 2)
+                except (TypeError, ValueError):
+                    pass
+            ref.update(update)
             return True, None, None
 
         if status not in ("ASSIGNED", "STARTED"):
@@ -2458,6 +2492,7 @@ def _logistics_vehicle_row(d, snap_id):
         "location_details": d.get("location_details") or "",
         "vehicle_type_label": d.get("vehicle_type_label") or "—",
         "fleet_vehicle_label": d.get("fleet_vehicle_label") or "—",
+        "vehicle_number": _vehicle_number_display(d),
         "hire_vehicle_type_label": d.get("hire_vehicle_type_label") or "—",
         "load_size_label": d.get("load_size_label") or "",
         "estimated_distance_display": d.get("estimated_distance_display") or "—",
@@ -2561,7 +2596,7 @@ def _logistics_row_to_csv_values(row):
         _csv_cell(row.get("required_at")),
         _csv_cell(row.get("vehicle_status")),
         _csv_cell(row.get("assigned_to")),
-        _csv_cell(row.get("fleet_vehicle_label")),
+        _csv_cell(row.get("vehicle_number")),
         _csv_cell((row.get("department") or "").upper()),
         _csv_cell(row.get("load_size_label")),
         _csv_cell(row.get("estimated_distance_display")),
@@ -6394,10 +6429,12 @@ def security_vehicle_gate():
     request_id = (payload.get("request_id") or "").strip()
     action = (payload.get("action") or "").strip()
     vehicle_number = payload.get("vehicle_number")
+    odo_reading = payload.get("odo_reading")
     ok, err, notify_ctx = _security_record_vehicle_gate(
         request_id,
         action,
         vehicle_number=vehicle_number,
+        odo_reading=odo_reading,
     )
     if not ok:
         return jsonify({"ok": False, "error": err or "Update failed"}), 400

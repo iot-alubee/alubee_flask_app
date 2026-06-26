@@ -737,11 +737,14 @@
 							<th scope="col">Category</th>
 							<th scope="col">Destination</th>
 							<th scope="col">Assignee</th>
+							<th scope="col">Vehicle No.</th>
 							<th scope="col">Required At</th>
 							<th scope="col">Status</th>
 							<th scope="col" class="cell-freeze-action">Action</th>
 							<th scope="col" class="cell-date">Out</th>
 							<th scope="col" class="cell-date">In</th>
+							<th scope="col" class="cell-date">ODO-OUT</th>
+							<th scope="col" class="cell-date">ODO-IN</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -758,6 +761,7 @@
 							<td class="cell">{{ row.destination_category_label|sentence_case }}</td>
 							<td class="cell">{{ row.destination_label|sentence_case }}</td>
 							<td class="cell">{{ row.assigned_to|sentence_case }}</td>
+							<td class="cell">{{ row.vehicle_number|sentence_case }}</td>
 							<td class="cell cell-date">{{ row.required_at }}</td>
 							<td class="cell">{{ row.vehicle_status }}</td>
 								<td class="cell cell-freeze-action">
@@ -768,20 +772,22 @@
 								{% elif row.is_external and row.show_external_out %}
 								<button type="button" class="btn btn-sm btn-primary vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="out">OUT</button>
 								{% elif row.show_out %}
-								<button type="button" class="btn btn-sm btn-primary vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="out">OUT</button>
+								<button type="button" class="btn btn-sm btn-primary vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="out" data-requires-odo="true">OUT</button>
 								{% elif row.show_in %}
-								<button type="button" class="btn btn-sm btn-success vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="in">IN</button>
+								<button type="button" class="btn btn-sm btn-success vehicle-gate-btn" data-request-id="{{ row.request_id }}" data-action="in" data-requires-odo="true">IN</button>
 								{% else %}
 								<span class="text-muted small">—</span>
 								{% endif %}
 							</td>
 							<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
 							<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
+							<td class="cell cell-date">{{ row.odo_out or '—' }}</td>
+							<td class="cell cell-date">{{ row.odo_in or '—' }}</td>
 						</tr>
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="{% if can_delete_requests %}11{% else %}10{% endif %}" class="cell text-center text-muted py-5">No vehicle requests for this date.</td>
+							<td colspan="{% if can_delete_requests %}14{% else %}13{% endif %}" class="cell text-center text-muted py-5">No vehicle requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
@@ -1338,14 +1344,54 @@
 		});
 	}
 
+	function submitVehicleOdoGate() {
+		if (!pendingVehicleGate || !pendingVehicleGate.requestId || !pendingVehicleGate.action) return;
+		var raw = odoInput ? odoInput.value.trim() : "";
+		if (!raw) {
+			showOdoError("Please enter the ODO meter reading.");
+			return;
+		}
+		var reading = Number(raw);
+		if (!Number.isFinite(reading) || reading < 0) {
+			showOdoError("Enter a valid ODO reading.");
+			return;
+		}
+		showOdoError("");
+		if (odoSubmit) odoSubmit.disabled = true;
+		if (pendingVehicleGate.btn) pendingVehicleGate.btn.disabled = true;
+		postVehicleGate(
+			pendingVehicleGate.requestId,
+			pendingVehicleGate.action,
+			null,
+			reading,
+			function (msg) {
+				showOdoError(msg);
+				if (odoSubmit) odoSubmit.disabled = false;
+				if (pendingVehicleGate && pendingVehicleGate.btn) {
+					pendingVehicleGate.btn.disabled = false;
+				}
+			}
+		).then(function (ok) {
+			if (ok && odoModal) odoModal.hide();
+		});
+	}
+
+	function submitOdoModal() {
+		if (pendingVehicleGate && pendingVehicleGate.requiresOdo) {
+			submitVehicleOdoGate();
+			return;
+		}
+		submitOdGate();
+	}
+
 	if (odoSubmit) {
-		odoSubmit.addEventListener("click", submitOdGate);
+		odoSubmit.addEventListener("click", submitOdoModal);
 	}
 	if (odoInput) {
 		odoInput.addEventListener("keydown", function (e) {
 			if (e.key === "Enter") {
 				e.preventDefault();
-				submitOdGate();
+				submitOdoModal();
 			}
 		});
 	}
@@ -1358,7 +1404,13 @@
 			}
 			if (odoSubmit) odoSubmit.disabled = false;
 			if (pendingGate.btn) pendingGate.btn.disabled = false;
+			if (pendingVehicleGate && pendingVehicleGate.btn) {
+				pendingVehicleGate.btn.disabled = false;
+			}
 			pendingGate = { requestId: null, action: null, btn: null, requiresOdo: false };
+			if (pendingVehicleGate && pendingVehicleGate.requiresOdo) {
+				pendingVehicleGate = null;
+			}
 		});
 	}
 
@@ -1699,9 +1751,12 @@
 		});
 	}
 
-	function postVehicleGate(requestId, action, vehicleNumber, onError) {
+	function postVehicleGate(requestId, action, vehicleNumber, odoReading, onError) {
 		var body = { request_id: requestId, action: action };
 		if (vehicleNumber) body.vehicle_number = vehicleNumber;
+		if (odoReading !== null && odoReading !== undefined) {
+			body.odo_reading = odoReading;
+		}
 		return fetch(vehicleGateEndpoint, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -1727,6 +1782,7 @@
 			var requestId = this.getAttribute("data-request-id");
 			var action = this.getAttribute("data-action");
 			var requiresVehicleNumber = this.getAttribute("data-requires-vehicle-number") === "true";
+			var requiresOdo = this.getAttribute("data-requires-odo") === "true";
 			if (!requestId || !action) return;
 
 			if (requiresVehicleNumber) {
@@ -1744,7 +1800,39 @@
 					var fallback = prompt("Enter vehicle number (e.g. TN 56 K 5951):");
 					if (fallback === null) return;
 					btn.disabled = true;
-					postVehicleGate(requestId, action, fallback.trim(), function (msg) {
+					postVehicleGate(requestId, action, fallback.trim(), null, function (msg) {
+						alert(msg);
+						btn.disabled = false;
+					});
+				}
+				return;
+			}
+
+			if (requiresOdo) {
+				pendingVehicleGate = { requestId: requestId, action: action, btn: btn, requiresOdo: true };
+				if (odoHint) {
+					odoHint.textContent = action === "out"
+						? "Enter the odometer reading when the internal vehicle leaves (OUT)."
+						: "Enter the odometer reading when the internal vehicle returns (IN).";
+				}
+				if (odoInput) {
+					odoInput.value = "";
+					odoInput.classList.remove("is-invalid");
+				}
+				showOdoError("");
+				if (odoSubmit) odoSubmit.disabled = false;
+				if (odoModal) {
+					odoModal.show();
+					setTimeout(function () { if (odoInput) odoInput.focus(); }, 300);
+				} else {
+					var odoFallback = prompt(
+						action === "out"
+							? "Enter ODO meter reading at OUT:"
+							: "Enter ODO meter reading at IN:"
+					);
+					if (odoFallback === null) return;
+					btn.disabled = true;
+					postVehicleGate(requestId, action, null, Number(odoFallback), function (msg) {
 						alert(msg);
 						btn.disabled = false;
 					});
@@ -1753,7 +1841,7 @@
 			}
 
 			btn.disabled = true;
-			postVehicleGate(requestId, action, null, function (msg) {
+			postVehicleGate(requestId, action, null, null, function (msg) {
 				alert(msg);
 				btn.disabled = false;
 			});
@@ -1779,6 +1867,7 @@
 				pendingVehicleGate.requestId,
 				pendingVehicleGate.action,
 				plate,
+				null,
 				function (msg) {
 					showExternalVehicleError(msg);
 					externalVehicleSubmit.disabled = false;

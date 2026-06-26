@@ -172,7 +172,7 @@
 								<th>Status</th>
 								<th>Action</th>
 								<th>Assignee</th>
-								<th>Vehicle</th>
+								<th>Vehicle No.</th>
 								<th>Department</th>
 								<th>Load</th>
 								<th>Distance</th>
@@ -220,7 +220,7 @@
 									</div>
 								</td>
 								<td>{{ row.assigned_to|sentence_case }}</td>
-								<td>{{ row.fleet_vehicle_label|sentence_case }}</td>
+								<td>{{ row.vehicle_number|sentence_case }}</td>
 								<td class="cell-dept">{{ row.department }}</td>
 								<td>{{ row.load_size_label|sentence_case }}</td>
 								<td>{{ row.estimated_distance_display }}</td>
