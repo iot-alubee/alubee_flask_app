@@ -3105,6 +3105,7 @@ def _maintenance_status_label(raw: str) -> str:
     labels = {
         "PENDING": "Pending",
         "ASSIGNED": "Assigned",
+        "AWAITING_USER_CLOSE": "Awaiting user",
         "IN_PROGRESS": "In Progress",
         "COMPLETED": "Completed",
         "CANCELLED": "Cancelled",
