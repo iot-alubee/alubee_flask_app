@@ -2377,11 +2377,16 @@ LOGISTICS_EXTERNAL_VENDORS: tuple[tuple[str, str], ...] = (
 )
 
 LOGISTICS_INTERNAL_FLEET: tuple[tuple[str, str], ...] = (
-    ("dost_3371", "Dost-3371"),
+    ("dost_3271", "Dost-3271"),
     ("dost_2568", "Dost-2568"),
     ("santro_2004", "Santro-2004"),
     ("santa_fe_1666", "Santa FE-1666"),
 )
+
+# Legacy fleet codes (old typos) → current code for label lookup.
+_LOGISTICS_FLEET_ALIASES: dict[str, str] = {
+    "dost_3371": "dost_3271",
+}
 
 
 def _logistics_normalize_code(value: str) -> str:
@@ -2455,6 +2460,7 @@ def _logistics_assignee_label(options: list[dict], code: str) -> str:
 
 def _logistics_fleet_vehicle_label(code: str) -> str:
     norm = _logistics_normalize_code(code)
+    norm = _LOGISTICS_FLEET_ALIASES.get(norm, norm)
     for item_code, label in LOGISTICS_INTERNAL_FLEET:
         if item_code == norm:
             return label
