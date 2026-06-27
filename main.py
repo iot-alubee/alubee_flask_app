@@ -255,8 +255,10 @@ def it_status_cell_class(value):
         return "security-appr-denied"
     if s == "ASSIGNED":
         return "security-appr-pending"
-    if s == "QUEUED":
+    if s in ("PENDING", "QUEUED"):
         return "security-appr-na"
+    if s == "AWAITING_USER_CLOSE":
+        return "security-appr-pending"
     return "security-appr-pending"
 
 
@@ -2038,13 +2040,239 @@ def fetch_security_leave_requests(
 
 def _it_status_label(raw: str) -> str:
     labels = {
-        "QUEUED": "Queued",
+        "PENDING": "Pending",
+        "QUEUED": "Pending",
         "ASSIGNED": "Assigned",
+        "AWAITING_USER_CLOSE": "Awaiting user",
         "CLOSED": "Closed",
         "CANCELLED": "Cancelled",
     }
     key = (raw or "").strip().upper()
     return labels.get(key, (raw or "—").strip() or "—")
+
+
+def _it_status_raw(rd: dict) -> str:
+    raw = (rd.get("it_status") or "PENDING").strip().upper()
+    if raw == "QUEUED":
+        return "PENDING"
+    return raw
+
+
+IT_ENGINEER_PHONES: tuple[str, ...] = (
+    "9994246682",
+    "7339221730",
+    "9498061569",
+)
+
+
+def _user_can_access_it() -> bool:
+    if not current_user.is_authenticated:
+        return False
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role in ("admin", "editor"):
+        return True
+    pages = getattr(current_user, "allowed_pages", None) or []
+    return "it" in pages
+
+
+def _it_engineer_wa_for_slot(slot: int) -> str:
+    try:
+        phone = IT_ENGINEER_PHONES[int(slot) - 1]
+    except (IndexError, ValueError, TypeError):
+        return ""
+    digits = "".join(c for c in phone if c.isdigit())[-10:]
+    return f"whatsapp:+91{digits}" if digits else ""
+
+
+def _it_lookup_user_name(db, wa_id: str) -> str:
+    wa = (wa_id or "").strip()
+    if not wa:
+        return ""
+    try:
+        snap = db.collection("users").document(wa).get()
+        if snap.exists:
+            return (snap.to_dict() or {}).get("name") or ""
+    except Exception:
+        app.logger.exception("IT engineer name lookup failed wa=%s", wa)
+    return ""
+
+
+def _it_engineer_options(db) -> list[dict]:
+    options = []
+    for slot, phone in enumerate(IT_ENGINEER_PHONES, start=1):
+        wa = _it_engineer_wa_for_slot(slot)
+        if not wa:
+            continue
+        name = _it_lookup_user_name(db, wa) or f"Engineer {slot}"
+        options.append({
+            "slot": slot,
+            "code": str(slot),
+            "label": name,
+            "wa_id": wa,
+        })
+    return options
+
+
+def _it_engineer_label(options: list[dict], slot_code: str) -> str:
+    code = (slot_code or "").strip()
+    for item in options:
+        if str(item.get("slot") or item.get("code") or "") == code:
+            return (item.get("label") or "").strip()
+    return ""
+
+
+def _it_row(d: dict, snap_id: str) -> dict:
+    status_raw = _it_status_raw(d)
+    desc = (d.get("description") or "").strip()
+    return {
+        "request_id": d.get("request_id") or snap_id,
+        "requested_datetime": _format_firestore_date_ist(d.get("requested_datetime")),
+        "requested_time": _format_firestore_time_ist_12h(d.get("requested_datetime")),
+        "employee_id": d.get("employee_id") or "",
+        "employee_name": d.get("employee_name") or "",
+        "department": d.get("department") or "",
+        "it_category_label": d.get("it_category_label") or d.get("it_category") or "",
+        "issue_type_label": d.get("issue_type_label") or d.get("issue_type") or "",
+        "description": desc or "—",
+        "issue_photo_url": (d.get("issue_photo_url") or "").strip(),
+        "priority_label": d.get("priority_label") or d.get("priority") or "",
+        "it_status": _it_status_label(d.get("it_status")),
+        "it_status_raw": status_raw,
+        "assigned_engineer_name": d.get("assigned_engineer_name") or "—",
+        "assigned_engineer_slot": d.get("assigned_engineer_slot") or 0,
+        "assigned_datetime": _format_firestore_time_ist_12h(d.get("assigned_datetime"))
+        or "—",
+        "closed_datetime": _format_firestore_time_ist_12h(d.get("closed_datetime"))
+        or "—",
+        "can_assign": status_raw == "PENDING",
+        "can_reassign": status_raw == "ASSIGNED",
+    }
+
+
+def _it_load_request(db, request_id: str):
+    rid = (request_id or "").strip()
+    if not rid:
+        return None, None, "Missing request id"
+    ref = db.collection("requests").document(rid)
+    snap = ref.get()
+    if not snap.exists:
+        return None, None, "Request not found"
+    d = snap.to_dict() or {}
+    if (d.get("type") or "").strip().upper() != "IT":
+        return None, None, "Not an IT request"
+    return ref, d, None
+
+
+def _it_send_assign_notifications(
+    rd: dict,
+    *,
+    request_id: str,
+    engineer_wa: str,
+    engineer_label: str,
+    reassign: bool = False,
+    old_engineer_wa: str = "",
+    employee_wa: str = "",
+) -> None:
+    try:
+        import it_notify
+
+        it_notify.notify_it_engineer_assigned(
+            rd,
+            request_id=request_id,
+            engineer_wa=engineer_wa,
+        )
+        display = vehicle_notify.sentence_case_name(engineer_label)
+        if reassign and old_engineer_wa:
+            vehicle_notify.send_text(
+                old_engineer_wa,
+                f"The IT ticket has been re-assigned to {display}. Thanks.",
+            )
+        if employee_wa:
+            if reassign:
+                msg = f"Your IT request has been re-assigned to {display}."
+            else:
+                msg = f"Your IT request has been assigned to {display}."
+            vehicle_notify.send_text(employee_wa, msg)
+    except Exception:
+        app.logger.exception("IT WhatsApp notify failed request_id=%s", request_id)
+
+
+def _it_assign(
+    request_id: str,
+    engineer_slot: str,
+    *,
+    reassign: bool = False,
+) -> tuple[bool, str | None]:
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, rd, load_err = _it_load_request(db, request_id)
+    if load_err:
+        return False, load_err
+
+    status = _it_status_raw(rd)
+    if reassign:
+        if status != "ASSIGNED":
+            return False, "Only assigned tickets can be re-assigned"
+    elif status != "PENDING":
+        return False, "Ticket is not pending"
+
+    try:
+        slot = int(str(engineer_slot).strip())
+    except ValueError:
+        return False, "Invalid engineer"
+
+    options = _it_engineer_options(db)
+    label = _it_engineer_label(options, str(slot))
+    engineer_wa = _it_engineer_wa_for_slot(slot)
+    if not label or not engineer_wa:
+        return False, "Invalid engineer"
+
+    old_slot = int(rd.get("assigned_engineer_slot") or 0)
+    if reassign and slot == old_slot:
+        return False, "Choose a different engineer"
+
+    now = datetime.now(timezone.utc)
+    actor = (getattr(current_user, "email", None) or "it_portal").strip()
+    old_wa = (rd.get("assigned_engineer") or "").strip() if reassign else ""
+    employee_wa = (rd.get("employee") or "").strip()
+
+    update = {
+        "it_status": "ASSIGNED",
+        "assigned_engineer": engineer_wa,
+        "assigned_engineer_name": label,
+        "assigned_engineer_slot": slot,
+        "assigned_datetime": now,
+        "assigned_by": actor,
+    }
+    if reassign:
+        update["previous_engineer"] = rd.get("assigned_engineer") or ""
+        update["previous_engineer_name"] = rd.get("assigned_engineer_name") or ""
+        update["reassigned_at"] = now
+    try:
+        ref.update(update)
+    except Exception as e:
+        app.logger.exception("IT assign failed request_id=%s", request_id)
+        return False, str(e)
+
+    updated = ref.get().to_dict() or {}
+    _it_send_assign_notifications(
+        updated,
+        request_id=request_id,
+        engineer_wa=engineer_wa,
+        engineer_label=label,
+        reassign=reassign,
+        old_engineer_wa=old_wa,
+        employee_wa=employee_wa,
+    )
+    app.logger.info(
+        "IT %s request_id=%s engineer_slot=%s by=%s",
+        "reassign" if reassign else "assign",
+        request_id,
+        slot,
+        actor,
+    )
+    return True, None
 
 
 def _fetch_security_it_requests_inner(
@@ -2069,41 +2297,7 @@ def _fetch_security_it_requests_inner(
 
     rows = []
     for _, d, snap_id in buf:
-        desc = (d.get("description") or "").strip()
-        rows.append(
-            {
-                "request_id": d.get("request_id") or snap_id,
-                "requested_datetime": _format_firestore_date_ist(
-                    d.get("requested_datetime")
-                ),
-                "requested_time": _format_firestore_time_ist_12h(
-                    d.get("requested_datetime")
-                ),
-                "employee_id": d.get("employee_id") or "",
-                "employee_name": d.get("employee_name") or "",
-                "department": d.get("department") or "",
-                "it_category_label": d.get("it_category_label")
-                or d.get("it_category")
-                or "",
-                "issue_type_label": d.get("issue_type_label")
-                or d.get("issue_type")
-                or "",
-                "description": desc or "—",
-                "issue_photo_url": (d.get("issue_photo_url") or "").strip(),
-                "priority_label": d.get("priority_label") or d.get("priority") or "",
-                "it_status": _it_status_label(d.get("it_status")),
-                "it_status_raw": (d.get("it_status") or "").strip().upper(),
-                "assigned_engineer_name": d.get("assigned_engineer_name") or "—",
-                "assigned_datetime": _format_firestore_time_ist_12h(
-                    d.get("assigned_datetime")
-                )
-                or "—",
-                "closed_datetime": _format_firestore_time_ist_12h(
-                    d.get("closed_datetime")
-                )
-                or "—",
-            }
-        )
+        rows.append(_it_row(d, snap_id))
     return rows
 
 
@@ -6380,6 +6574,61 @@ def hr():
 @login_required
 def it():
     return _render_requests_page("it", "it", IT_TABS, "it-request")
+
+
+@app.route("/it/api/engineers", methods=["GET"])
+@login_required
+def it_engineers():
+    if not _user_can_access_it():
+        abort(403)
+    db, err = _get_firestore_client()
+    if err:
+        return jsonify({"ok": False, "error": err}), 500
+    request_id = (request.args.get("request_id") or "").strip()
+    if not request_id:
+        return jsonify({"ok": False, "error": "Missing request_id"}), 400
+    _ref, rd, load_err = _it_load_request(db, request_id)
+    if load_err:
+        return jsonify({"ok": False, "error": load_err}), 400
+    options = _it_engineer_options(db)
+    current = str(rd.get("assigned_engineer_slot") or "")
+    return jsonify({
+        "ok": True,
+        "engineers": options,
+        "current_engineer_slot": current,
+    })
+
+
+@app.route("/it/api/assign", methods=["POST"])
+@login_required
+def it_assign():
+    if not _user_can_access_it():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    ok, err = _it_assign(
+        payload.get("request_id") or "",
+        payload.get("engineer_slot") or "",
+        reassign=False,
+    )
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not assign"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/it/api/reassign", methods=["POST"])
+@login_required
+def it_reassign():
+    if not _user_can_access_it():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    ok, err = _it_assign(
+        payload.get("request_id") or "",
+        payload.get("engineer_slot") or "",
+        reassign=True,
+    )
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not re-assign"}), 400
+    return jsonify({"ok": True})
 
 
 @app.route("/logistics")

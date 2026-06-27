@@ -171,6 +171,26 @@
 		position: relative;
 		z-index: 2;
 	}
+	.it-action-btn {
+		display: block;
+		width: 100%;
+		font-size: 0.75rem;
+		font-weight: 600;
+		padding: 0.2rem 0.45rem;
+		border-radius: 0.25rem;
+		border: 1px solid transparent;
+		line-height: 1.3;
+	}
+	.it-action-btn--assign {
+		color: #0d6efd;
+		background: rgba(13, 110, 253, 0.08);
+		border-color: rgba(13, 110, 253, 0.35);
+	}
+	.it-action-btn--reassign {
+		color: #fd7e14;
+		background: rgba(253, 126, 20, 0.08);
+		border-color: rgba(253, 126, 20, 0.35);
+	}
 	#itIssuePhotoModal {
 		z-index: 1060;
 	}
@@ -624,6 +644,9 @@
 							<th scope="col">Photo</th>
 							<th scope="col">Priority</th>
 							<th scope="col">Status</th>
+							{% if section_endpoint == 'it' %}
+							<th scope="col" class="cell-freeze-action">Action</th>
+							{% endif %}
 							<th scope="col">Assigned Engineer</th>
 							<th scope="col" class="cell-date">Assigned At</th>
 							<th scope="col" class="cell-date">Closed At</th>
@@ -662,6 +685,23 @@
 							</td>
 							<td class="cell">{{ row.priority_label|sentence_case }}</td>
 							<td class="cell {{ row.it_status_raw|it_status_cell_class }}">{{ row.it_status }}</td>
+							{% if section_endpoint == 'it' %}
+							<td class="cell cell-freeze-action">
+								<div class="d-flex flex-column gap-1">
+									{% if row.can_assign %}
+									<button type="button" class="it-action-btn it-action-btn--assign it-assign-btn"
+										data-request-id="{{ row.request_id }}" data-mode="assign">Assign</button>
+									{% endif %}
+									{% if row.can_reassign %}
+									<button type="button" class="it-action-btn it-action-btn--reassign it-assign-btn"
+										data-request-id="{{ row.request_id }}" data-mode="reassign">Re Assign</button>
+									{% endif %}
+									{% if not row.can_assign and not row.can_reassign %}
+									<span class="text-muted small">—</span>
+									{% endif %}
+								</div>
+							</td>
+							{% endif %}
 							<td class="cell">{{ row.assigned_engineer_name|sentence_case }}</td>
 							<td class="cell cell-date">{{ row.assigned_datetime }}</td>
 							<td class="cell cell-date">{{ row.closed_datetime }}</td>
@@ -669,7 +709,7 @@
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="{% if can_delete_requests %}15{% else %}14{% endif %}" class="cell text-center text-muted py-5">No IT requests for this date.</td>
+							<td colspan="{% if can_delete_requests %}{% if section_endpoint == 'it' %}16{% else %}15{% endif %}{% else %}{% if section_endpoint == 'it' %}15{% else %}14{% endif %}{% endif %}" class="cell text-center text-muted py-5">No IT requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
@@ -1119,6 +1159,34 @@
 				</div>
 			</div>
 		</div>
+
+		{% if section_endpoint == 'it' %}
+		<div class="modal fade" id="itAssignModal" tabindex="-1" aria-labelledby="itAssignModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title" id="itAssignModalLabel">Assign IT ticket</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body">
+						<input type="hidden" id="it-modal-request-id" value="">
+						<input type="hidden" id="it-modal-mode" value="assign">
+						<div class="mb-2">
+							<label for="it-engineer-select" class="form-label fw-semibold">Engineer</label>
+							<select id="it-engineer-select" class="form-select">
+								<option value="">Loading…</option>
+							</select>
+						</div>
+						<div class="invalid-feedback d-block" id="it-assign-error" style="display:none;"></div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+						<button type="button" class="btn btn-primary" id="it-assign-submit">Confirm</button>
+					</div>
+				</div>
+			</div>
+		</div>
+		{% endif %}
 
 		<div class="modal fade" id="itIssuePhotoModal" tabindex="-1" aria-labelledby="itIssuePhotoModalLabel" aria-hidden="true">
 			<div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
@@ -1932,6 +2000,104 @@
 			setTimeout(function () { if (odoInput) odoInput.focus(); }, 300);
 		});
 	});
+{% if section_endpoint == 'it' %}
+	var itEngineersUrl = {{ url_for('it_engineers') | tojson }};
+	var itAssignUrl = {{ url_for('it_assign') | tojson }};
+	var itReassignUrl = {{ url_for('it_reassign') | tojson }};
+	var itModalEl = document.getElementById("itAssignModal");
+	var itModal = itModalEl && typeof bootstrap !== "undefined"
+		? bootstrap.Modal.getOrCreateInstance(itModalEl) : null;
+	var itModalTitle = document.getElementById("itAssignModalLabel");
+	var itRequestIdInput = document.getElementById("it-modal-request-id");
+	var itModeInput = document.getElementById("it-modal-mode");
+	var itEngineerSelect = document.getElementById("it-engineer-select");
+	var itAssignError = document.getElementById("it-assign-error");
+	var itAssignSubmit = document.getElementById("it-assign-submit");
+
+	function showItAssignError(msg) {
+		if (!itAssignError) return;
+		if (msg) {
+			itAssignError.textContent = msg;
+			itAssignError.style.display = "block";
+		} else {
+			itAssignError.textContent = "";
+			itAssignError.style.display = "none";
+		}
+	}
+
+	function loadItEngineers(requestId) {
+		if (!itEngineerSelect) return Promise.resolve();
+		itEngineerSelect.innerHTML = '<option value="">Loading…</option>';
+		return fetch(itEngineersUrl + "?request_id=" + encodeURIComponent(requestId))
+			.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+			.then(function (x) {
+				if (!x.ok || !x.j.ok) {
+					throw new Error((x.j && x.j.error) || "Could not load engineers.");
+				}
+				var opts = x.j.engineers || [];
+				var current = String(x.j.current_engineer_slot || "");
+				if (!opts.length) {
+					itEngineerSelect.innerHTML = '<option value="">No engineers configured</option>';
+					return;
+				}
+				itEngineerSelect.innerHTML = '<option value="">Select engineer</option>' +
+					opts.map(function (o) {
+						var slot = String(o.slot || o.code || "");
+						var disabled = slot === current ? ' disabled' : '';
+						return '<option value="' + slot + '"' + disabled + '>' + (o.label || slot) + '</option>';
+					}).join("");
+			});
+	}
+
+	document.querySelectorAll(".it-assign-btn").forEach(function (btn) {
+		btn.addEventListener("click", function () {
+			var rid = (btn.getAttribute("data-request-id") || "").trim();
+			var mode = (btn.getAttribute("data-mode") || "assign").trim();
+			if (!rid) return;
+			if (itRequestIdInput) itRequestIdInput.value = rid;
+			if (itModeInput) itModeInput.value = mode;
+			if (itModalTitle) {
+				itModalTitle.textContent = mode === "reassign" ? "Re Assign IT ticket" : "Assign IT ticket";
+			}
+			showItAssignError("");
+			loadItEngineers(rid).catch(function (err) {
+				showItAssignError(err.message || "Could not load engineers.");
+			});
+			if (itModal) itModal.show();
+		});
+	});
+
+	if (itAssignSubmit) {
+		itAssignSubmit.addEventListener("click", function () {
+			var rid = (itRequestIdInput && itRequestIdInput.value || "").trim();
+			var mode = (itModeInput && itModeInput.value || "assign").trim();
+			var slot = (itEngineerSelect && itEngineerSelect.value || "").trim();
+			if (!rid || !slot) {
+				showItAssignError("Please select an engineer.");
+				return;
+			}
+			showItAssignError("");
+			itAssignSubmit.disabled = true;
+			var url = mode === "reassign" ? itReassignUrl : itAssignUrl;
+			fetch(url, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ request_id: rid, engineer_slot: slot })
+			})
+				.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+				.then(function (x) {
+					if (!x.ok || !x.j.ok) {
+						throw new Error((x.j && x.j.error) || "Could not save.");
+					}
+					window.location.reload();
+				})
+				.catch(function (err) {
+					showItAssignError(err.message || "Could not save.");
+					itAssignSubmit.disabled = false;
+				});
+		});
+	}
+{% endif %}
 })();
 
 </script>
