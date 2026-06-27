@@ -17,7 +17,6 @@ from vehicle_notify import (
     _phone_to_10,
     _post_message,
     ensure_customer,
-    send_text,
     sentence_case_name,
     wa_id_to_phone,
 )
@@ -124,41 +123,49 @@ def notify_maintenance_assignee(
     request_id: str,
     assignee_wa: str,
 ) -> None:
-    """Notify technician with image-header template (same as WhatsApp bot)."""
+    """Notify technician via maintenance_team_notification_v01 (issue photo in header)."""
     wa = (assignee_wa or "").strip()
     if not wa:
         logger.warning("maintenance assignee notify skipped — no wa request_id=%s", request_id)
         return
+
     photo_url = (rd.get("issue_photo_url") or "").strip()
+    if not photo_url.lower().startswith("https://"):
+        logger.error(
+            "maintenance assignee notify skipped — no photo request_id=%s", request_id
+        )
+        return
+
     template_name = _team_notify_template_name()
+    if not template_name:
+        logger.warning("MAINTENANCE_TEAM_NOTIFY_TEMPLATE_NAME not set")
+        return
+
     phone = wa_id_to_phone(wa)
     display_name = sentence_case_name(rd.get("assigned_to") or "Technician")
     body_values = _team_notify_template_body_values(rd)
     rid = (request_id or "").strip()
 
-    if template_name and photo_url:
-        try:
-            _send_template_with_image_header(
-                phone,
-                template_name,
-                photo_url,
-                language_code=_team_notify_template_language(),
-                body_values=body_values,
-                callback_data=rid[:512],
-                contact_name=display_name,
-            )
-            logger.info("maintenance assignee template sent wa=%s request_id=%s", wa, request_id)
-            return
-        except Exception:
-            logger.exception(
-                "maintenance assignee template failed wa=%s request_id=%s", wa, request_id
-            )
-
-    caption = (
-        f"Maintenance assigned\n"
-        f"{rd.get('machine_no_label') or '—'} — {rd.get('issue_category_label') or '—'}"
-    )
     try:
-        send_text(wa, caption)
+        _send_template_with_image_header(
+            phone,
+            template_name,
+            photo_url,
+            language_code=_team_notify_template_language(),
+            body_values=body_values,
+            callback_data=rid[:512],
+            contact_name=display_name,
+        )
+        logger.info(
+            "maintenance team image template sent wa=%s request_id=%s photo=%s",
+            wa,
+            request_id,
+            photo_url[:80],
+        )
     except Exception:
-        logger.exception("maintenance assignee text failed wa=%s request_id=%s", wa, request_id)
+        logger.exception(
+            "maintenance team template failed wa=%s request_id=%s photo=%s",
+            wa,
+            request_id,
+            photo_url[:80],
+        )
