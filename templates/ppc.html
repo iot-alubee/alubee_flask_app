@@ -242,10 +242,110 @@
 			</div>
 		</div>
 		{% elif selected_tab == 'maintenance' %}
-		<div class="app-card app-card-settings shadow-sm">
-			<div class="app-card-body p-5 text-center">
-				<h2 class="app-page-title mb-3">App Under Development - Stay Tuned!</h2>
-				<p class="text-muted mb-0">Maintenance is coming soon.</p>
+		<div class="app-card app-card-settings logistics-card">
+			<div class="app-card-body p-3 border-bottom">
+				<form method="get" action="{{ url_for('logistics') }}" class="d-flex flex-wrap align-items-end gap-3">
+					<input type="hidden" name="tab" value="maintenance">
+					<div class="d-flex flex-wrap align-items-end gap-2">
+						<div>
+							<label for="maintenance-date" class="form-label small mb-1">Date (IST)</label>
+							<input id="maintenance-date" type="date" name="date" class="form-control form-control-sm" value="{{ selected_date_iso }}">
+						</div>
+						<div class="pb-1">
+							<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="maintenance-refresh-today">Today</button>
+						</div>
+					</div>
+					<div class="pb-1">
+						<button type="submit" class="btn btn-sm btn-primary px-3">Apply</button>
+					</div>
+					{% if can_delete_requests %}
+					<div class="pb-1 ms-auto">
+						<button type="button" class="btn btn-sm btn-outline-danger px-2" id="maintenance-delete-btn" disabled title="Delete selected requests" aria-label="Delete selected requests">
+							<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>
+						</button>
+					</div>
+					{% endif %}
+				</form>
+			</div>
+			<div class="app-card-body p-0">
+				<div class="table-responsive logistics-scroll">
+					<table class="table table-hover logistics-table mb-0">
+						<thead>
+							<tr>
+								{% if can_delete_requests %}
+								<th class="cell-select">
+									<input type="checkbox" class="form-check-input" id="maintenance-select-all" title="Select all" aria-label="Select all requests">
+								</th>
+								{% endif %}
+								<th>Employee</th>
+								<th>Unit</th>
+								<th>Department</th>
+								<th>Machine Type</th>
+								<th>Machine No</th>
+								<th>Issue</th>
+								<th>Photo</th>
+								<th>Status</th>
+								<th>Action</th>
+								<th>Assignee</th>
+								<th>Requested</th>
+								<th>Assigned At</th>
+								<th>Completed At</th>
+								<th>Time Taken</th>
+							</tr>
+						</thead>
+						<tbody>
+							{% if maintenance_requests %}
+							{% for row in maintenance_requests %}
+							<tr>
+								{% if can_delete_requests %}
+								<td class="cell-select">
+									<input type="checkbox" class="form-check-input maintenance-request-select" value="{{ row.request_id }}" aria-label="Select request">
+								</td>
+								{% endif %}
+								<td>{{ row.employee_name|sentence_case }}{% if row.employee_id %}<br><span class="text-muted small">{{ row.employee_id|upper }}</span>{% endif %}</td>
+								<td>{{ row.unit_label|sentence_case }}</td>
+								<td class="cell-dept">{{ row.department }}</td>
+								<td>{{ row.machine_type_label|sentence_case }}</td>
+								<td>{{ row.machine_no_label|sentence_case }}</td>
+								<td class="cell-wrap">{{ row.issue_category_label|sentence_case }}</td>
+								<td>
+									{% if row.issue_photo_url %}
+									<a href="{{ row.issue_photo_url }}" target="_blank" rel="noopener noreferrer" class="small">View</a>
+									{% else %}
+									<span class="text-muted">—</span>
+									{% endif %}
+								</td>
+								<td><span class="badge bg-secondary">{{ row.maintenance_status }}</span></td>
+								<td class="logistics-action-cell">
+									<div class="d-flex flex-column gap-1">
+										{% if row.can_assign %}
+										<button type="button" class="logistics-action-btn logistics-action-btn--assign maintenance-assign-btn"
+											data-request-id="{{ row.request_id }}" data-mode="assign">Assign</button>
+										{% endif %}
+										{% if row.can_reassign %}
+										<button type="button" class="logistics-action-btn logistics-action-btn--reassign maintenance-assign-btn"
+											data-request-id="{{ row.request_id }}" data-mode="reassign">Re Assign</button>
+										{% endif %}
+										{% if not row.can_assign and not row.can_reassign %}
+										<span class="text-muted small">—</span>
+										{% endif %}
+									</div>
+								</td>
+								<td>{{ row.assigned_to|sentence_case }}</td>
+								<td class="cell-date">{{ row.requested_date }} {{ row.requested_time }}</td>
+								<td>{{ row.assigned_at }}</td>
+								<td>{{ row.completed_at }}</td>
+								<td>{{ row.time_taken }}</td>
+							</tr>
+							{% endfor %}
+							{% else %}
+							<tr>
+								<td colspan="{% if can_delete_requests %}15{% else %}14{% endif %}" class="text-center text-muted py-5">No maintenance requests for this date.</td>
+							</tr>
+							{% endif %}
+						</tbody>
+					</table>
+				</div>
 			</div>
 		</div>
 		{% endif %}
@@ -319,6 +419,34 @@
 			<div class="modal-footer">
 				<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
 				<button type="button" class="btn btn-primary" id="logistics-assign-submit">Confirm</button>
+			</div>
+		</div>
+	</div>
+</div>
+{% endif %}
+
+{% if selected_tab == 'maintenance' %}
+<div class="modal fade" id="maintenanceAssignModal" tabindex="-1" aria-labelledby="maintenanceAssignModalLabel" aria-hidden="true">
+	<div class="modal-dialog modal-dialog-centered">
+		<div class="modal-content">
+			<div class="modal-header">
+				<h5 class="modal-title" id="maintenanceAssignModalLabel">Assign maintenance</h5>
+				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+			</div>
+			<div class="modal-body">
+				<input type="hidden" id="maintenance-modal-request-id" value="">
+				<input type="hidden" id="maintenance-modal-mode" value="assign">
+				<div class="mb-2">
+					<label for="maintenance-assignee-select" class="form-label fw-semibold">Technician</label>
+					<select id="maintenance-assignee-select" class="form-select">
+						<option value="">Loading…</option>
+					</select>
+				</div>
+				<div class="invalid-feedback d-block" id="maintenance-assign-error" style="display:none;"></div>
+			</div>
+			<div class="modal-footer">
+				<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+				<button type="button" class="btn btn-primary" id="maintenance-assign-submit">Confirm</button>
 			</div>
 		</div>
 	</div>
@@ -606,6 +734,204 @@
 	var deleteBtn = document.getElementById("logistics-delete-btn");
 	var selectAll = document.getElementById("logistics-select-all");
 	var rowSelectClass = ".logistics-request-select";
+
+	function postDeleteRequestOnce(requestId) {
+		return fetch(deleteRequestEndpoint, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ request_id: requestId }),
+		})
+			.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+			.then(function (x) {
+				if (!x.ok || !x.j.ok) {
+					throw new Error((x.j && x.j.error) || "Could not delete.");
+				}
+				return true;
+			});
+	}
+
+	if (deleteBtn) {
+		function selectedIds() {
+			return Array.prototype.map.call(
+				document.querySelectorAll(rowSelectClass + ":checked"),
+				function (el) { return (el.value || "").trim(); }
+			).filter(Boolean);
+		}
+
+		function updateDeleteBtn() {
+			deleteBtn.disabled = selectedIds().length === 0;
+		}
+
+		if (selectAll) {
+			selectAll.addEventListener("change", function () {
+				var checked = selectAll.checked;
+				document.querySelectorAll(rowSelectClass).forEach(function (cb) {
+					cb.checked = checked;
+				});
+				updateDeleteBtn();
+			});
+		}
+
+		document.querySelectorAll(rowSelectClass).forEach(function (cb) {
+			cb.addEventListener("change", function () {
+				if (selectAll) {
+					var all = document.querySelectorAll(rowSelectClass);
+					var nChecked = document.querySelectorAll(rowSelectClass + ":checked").length;
+					selectAll.checked = all.length > 0 && nChecked === all.length;
+					selectAll.indeterminate = nChecked > 0 && nChecked < all.length;
+				}
+				updateDeleteBtn();
+			});
+		});
+
+		deleteBtn.addEventListener("click", function () {
+			var ids = selectedIds();
+			if (!ids.length) {
+				alert("Select at least one request to delete.");
+				return;
+			}
+			var msg = ids.length === 1
+				? "Delete this request permanently? This cannot be undone."
+				: "Delete " + ids.length + " requests permanently? This cannot be undone.";
+			if (!window.confirm(msg)) return;
+			deleteBtn.disabled = true;
+			var chain = Promise.resolve();
+			var failed = null;
+			ids.forEach(function (id) {
+				chain = chain.then(function () {
+					return postDeleteRequestOnce(id);
+				}).catch(function (err) {
+					failed = err.message || "Could not delete.";
+					throw err;
+				});
+			});
+			chain.then(function () {
+				window.location.reload();
+			}).catch(function () {
+				alert(failed || "Could not delete.");
+				updateDeleteBtn();
+			});
+		});
+	}
+})();
+</script>
+{% endif %}
+
+{% if selected_tab == 'maintenance' %}
+<script>
+(function () {
+	var todayBtn = document.getElementById("maintenance-refresh-today");
+	if (todayBtn) {
+		todayBtn.addEventListener("click", function () {
+			window.location.href = {{ url_for('logistics', tab='maintenance') | tojson }};
+		});
+	}
+
+	var assigneesUrl = {{ url_for('maintenance_assignees') | tojson }};
+	var assignUrl = {{ url_for('maintenance_assign') | tojson }};
+	var reassignUrl = {{ url_for('maintenance_reassign') | tojson }};
+
+	var modalEl = document.getElementById("maintenanceAssignModal");
+	var modal = modalEl && typeof bootstrap !== "undefined"
+		? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+	var modalTitle = document.getElementById("maintenanceAssignModalLabel");
+	var requestIdInput = document.getElementById("maintenance-modal-request-id");
+	var modeInput = document.getElementById("maintenance-modal-mode");
+	var assigneeSelect = document.getElementById("maintenance-assignee-select");
+	var assignError = document.getElementById("maintenance-assign-error");
+	var assignSubmit = document.getElementById("maintenance-assign-submit");
+
+	function showAssignError(msg) {
+		if (!assignError) return;
+		if (msg) {
+			assignError.textContent = msg;
+			assignError.style.display = "block";
+		} else {
+			assignError.textContent = "";
+			assignError.style.display = "none";
+		}
+	}
+
+	function loadAssignees(requestId) {
+		if (!assigneeSelect) return Promise.resolve();
+		assigneeSelect.innerHTML = '<option value="">Loading…</option>';
+		return fetch(assigneesUrl + "?request_id=" + encodeURIComponent(requestId))
+			.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+			.then(function (x) {
+				if (!x.ok || !x.j.ok) {
+					throw new Error((x.j && x.j.error) || "Could not load technicians.");
+				}
+				var opts = x.j.assignees || [];
+				var current = (x.j.current_assignee_code || "").toLowerCase();
+				if (!opts.length) {
+					assigneeSelect.innerHTML = '<option value="">No technicians for this department</option>';
+					return;
+				}
+				assigneeSelect.innerHTML = '<option value="">Select technician</option>' +
+					opts.map(function (o) {
+						var code = (o.code || "").toLowerCase();
+						var disabled = code === current ? ' disabled' : '';
+						return '<option value="' + code + '"' + disabled + '>' + (o.label || code) + '</option>';
+					}).join("");
+			});
+	}
+
+	document.querySelectorAll(".maintenance-assign-btn").forEach(function (btn) {
+		btn.addEventListener("click", function () {
+			var rid = (btn.getAttribute("data-request-id") || "").trim();
+			var mode = (btn.getAttribute("data-mode") || "assign").trim();
+			if (!rid) return;
+			if (requestIdInput) requestIdInput.value = rid;
+			if (modeInput) modeInput.value = mode;
+			if (modalTitle) {
+				modalTitle.textContent = mode === "reassign" ? "Re Assign maintenance" : "Assign maintenance";
+			}
+			showAssignError("");
+			loadAssignees(rid).catch(function (err) {
+				showAssignError(err.message || "Could not load technicians.");
+			});
+			if (modal) modal.show();
+		});
+	});
+
+	if (assignSubmit) {
+		assignSubmit.addEventListener("click", function () {
+			var rid = (requestIdInput && requestIdInput.value || "").trim();
+			var mode = (modeInput && modeInput.value || "assign").trim();
+			var code = (assigneeSelect && assigneeSelect.value || "").trim();
+			if (!rid || !code) {
+				showAssignError("Please select a technician.");
+				return;
+			}
+			showAssignError("");
+			assignSubmit.disabled = true;
+			var url = mode === "reassign" ? reassignUrl : assignUrl;
+			fetch(url, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ request_id: rid, assignee_code: code })
+			})
+				.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+				.then(function (x) {
+					if (!x.ok || !x.j.ok) {
+						showAssignError((x.j && x.j.error) || "Could not save.");
+						assignSubmit.disabled = false;
+						return;
+					}
+					if (modal) modal.hide();
+					window.location.reload();
+				})
+				.catch(function () {
+					showAssignError("Network error.");
+					assignSubmit.disabled = false;
+				});
+		});
+	}
+
+	var deleteRequestEndpoint = {{ url_for('security_delete_request') | tojson }};
+	var deleteBtn = document.getElementById("maintenance-delete-btn");
+	var selectAll = document.getElementById("maintenance-select-all");
+	var rowSelectClass = ".maintenance-request-select";
 
 	function postDeleteRequestOnce(requestId) {
 		return fetch(deleteRequestEndpoint, {

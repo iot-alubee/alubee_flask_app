@@ -28,6 +28,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
 import vehicle_notify
+import maintenance_notify
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -2860,6 +2861,294 @@ def _logistics_cancel_vehicle(request_id: str) -> tuple[bool, str | None]:
             "logistics cancel WhatsApp notify failed request_id=%s", request_id
         )
     app.logger.info("logistics cancel request_id=%s by=%s", request_id, actor)
+    return True, None
+
+
+MAINTENANCE_PDC_ASSIGNEES: tuple[tuple[str, str], ...] = (
+    ("adc005", "SIVAKUMAR"),
+    ("adc036", "MAHENDHIRAN"),
+    ("sri082", "KALAIVANNAN"),
+)
+MAINTENANCE_CNC_FET_SEC_ASSIGNEES: tuple[tuple[str, str], ...] = (
+    ("adc012", "MURUGESAN"),
+    ("adc093", "KANDAN"),
+)
+
+
+def _user_can_access_maintenance() -> bool:
+    if not current_user.is_authenticated:
+        return False
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role in ("admin", "editor"):
+        return True
+    pages = getattr(current_user, "allowed_pages", None) or []
+    return "maintenance" in pages
+
+
+def _maintenance_normalize_dept(dept: str) -> str:
+    d = (dept or "").strip().upper()
+    if d == "FET":
+        return "FETTLING"
+    return d
+
+
+def _maintenance_normalize_code(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (value or "").strip().lower()).strip("_")
+
+
+def _maintenance_unit_label(route: str) -> str:
+    r = (route or "").strip().upper()
+    if r in ("JMD2", "UNIT_II", "UNIT2", "UNIT-2", "UNIT 2"):
+        return "Unit II"
+    return "Unit I"
+
+
+def _maintenance_status_raw(rd: dict) -> str:
+    return (rd.get("maintenance_status") or "PENDING").strip().upper()
+
+
+def _maintenance_status_label(raw: str) -> str:
+    labels = {
+        "PENDING": "Pending",
+        "ASSIGNED": "Assigned",
+        "IN_PROGRESS": "In Progress",
+        "COMPLETED": "Completed",
+        "CANCELLED": "Cancelled",
+    }
+    key = (raw or "").strip().upper()
+    return labels.get(key, (raw or "—").strip() or "—")
+
+
+def _maintenance_assignee_options(dept: str) -> list[dict]:
+    d = _maintenance_normalize_dept(dept)
+    if d == "PDC":
+        source = MAINTENANCE_PDC_ASSIGNEES
+    elif d in ("CNC", "FETTLING", "SECONDARY"):
+        source = MAINTENANCE_CNC_FET_SEC_ASSIGNEES
+    else:
+        return []
+    return [
+        {"code": _maintenance_normalize_code(code), "label": label, "wa_id": ""}
+        for code, label in source
+    ]
+
+
+def _maintenance_assignee_label(options: list[dict], code: str) -> str:
+    norm = _maintenance_normalize_code(code)
+    for item in options:
+        if _maintenance_normalize_code(item.get("code") or "") == norm:
+            return (item.get("label") or "").strip()
+    return ""
+
+
+def _maintenance_assignee_wa_for_code(db, assignee_code: str) -> str:
+    norm = _maintenance_normalize_code(assignee_code)
+    if not norm:
+        return ""
+    try:
+        for snap in db.collection("users").stream():
+            ud = snap.to_dict() or {}
+            emp_id = _maintenance_normalize_code(ud.get("employee_id") or "")
+            if emp_id == norm:
+                return (snap.id or "").strip()
+    except Exception:
+        app.logger.exception("maintenance assignee lookup failed code=%s", assignee_code)
+    return ""
+
+
+def _maintenance_row(d, snap_id):
+    status_raw = _maintenance_status_raw(d)
+    photo_url = (d.get("issue_photo_url") or "").strip()
+    return {
+        "request_id": d.get("request_id") or snap_id,
+        "employee_id": d.get("employee_id") or "",
+        "employee_name": d.get("employee_name") or "",
+        "unit_label": _maintenance_unit_label(d.get("jmd_route") or ""),
+        "department": d.get("department") or "",
+        "machine_type_label": d.get("machine_type_label") or "—",
+        "machine_no_label": d.get("machine_no_label") or "—",
+        "issue_category_label": d.get("issue_category_label") or "—",
+        "issue_photo_url": photo_url,
+        "maintenance_status": _maintenance_status_label(status_raw),
+        "maintenance_status_raw": status_raw,
+        "assigned_to": d.get("assigned_to") or "—",
+        "assigned_to_code": d.get("assigned_to_code") or "",
+        "requested_date": _format_firestore_date_ist(d.get("requested_datetime")),
+        "requested_time": _format_firestore_time_ist_12h(d.get("requested_datetime")),
+        "assigned_at": _format_firestore_time_ist_12h(d.get("assigned_at")) or "—",
+        "completed_at": _format_firestore_time_ist_12h(d.get("completed_at")) or "—",
+        "time_taken": (d.get("time_taken") or "").strip() or "—",
+        "can_assign": status_raw == "PENDING",
+        "can_reassign": status_raw == "ASSIGNED",
+    }
+
+
+def _fetch_maintenance_requests_inner(
+    db,
+    *,
+    ist_day=None,
+    limit=300,
+):
+    buf = []
+    for snap in _security_requests_snapshots(db, "MAINTENANCE"):
+        d = snap.to_dict() or {}
+        ts = d.get("requested_datetime")
+        if ist_day is not None:
+            if _requested_datetime_ist_date(ts) != ist_day:
+                continue
+        buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
+
+    buf.sort(key=lambda x: x[0], reverse=True)
+    if limit is not None:
+        buf = buf[:limit]
+    return [_maintenance_row(d, snap_id) for _, d, snap_id in buf]
+
+
+def _fetch_maintenance_requests_with_timeout(**kwargs):
+    db, err = _get_firestore_client()
+    if err:
+        return [], err
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_fetch_maintenance_requests_inner, db, **kwargs)
+            return future.result(timeout=25), None
+    except TimeoutError:
+        app.logger.error("Firestore maintenance fetch timed out")
+        return [], (
+            "Firestore request timed out. Check that the Cloud Run service account has "
+            "Cloud Datastore User on whatsapp-approval-system."
+        )
+    except Exception as e:
+        app.logger.exception("Firestore maintenance fetch failed")
+        return [], _firestore_user_message(e)
+
+
+def fetch_maintenance_requests(ist_day=None):
+    return _fetch_maintenance_requests_with_timeout(ist_day=ist_day)
+
+
+def _maintenance_load_request(db, request_id: str):
+    rid = (request_id or "").strip()
+    if not rid:
+        return None, None, "Missing request id"
+    ref = db.collection("requests").document(rid)
+    snap = ref.get()
+    if not snap.exists:
+        return None, None, "Request not found"
+    d = snap.to_dict() or {}
+    if (d.get("type") or "").strip().upper() != "MAINTENANCE":
+        return None, None, "Not a maintenance request"
+    return ref, d, None
+
+
+def _maintenance_send_assign_notifications(
+    rd: dict,
+    *,
+    request_id: str,
+    assignee_wa: str,
+    assignee_label: str,
+    reassign: bool = False,
+    old_assignee_wa: str = "",
+    employee_wa: str = "",
+) -> None:
+    try:
+        maintenance_notify.notify_maintenance_assignee(
+            rd,
+            request_id=request_id,
+            assignee_wa=assignee_wa,
+        )
+        display = vehicle_notify.sentence_case_name(assignee_label)
+        if reassign and old_assignee_wa:
+            vehicle_notify.send_text(
+                old_assignee_wa,
+                f"The maintenance request has been re-assigned to {display}. Thanks.",
+            )
+        if employee_wa:
+            if reassign:
+                msg = f"Your maintenance request has been re-assigned to {display}."
+            else:
+                msg = f"Your maintenance request has been assigned to {display}."
+            vehicle_notify.send_text(employee_wa, msg)
+    except Exception:
+        app.logger.exception(
+            "maintenance WhatsApp notify failed request_id=%s", request_id
+        )
+
+
+def _maintenance_assign(
+    request_id: str,
+    assignee_code: str,
+    *,
+    reassign: bool = False,
+) -> tuple[bool, str | None]:
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, rd, err = _maintenance_load_request(db, request_id)
+    if err:
+        return False, err
+
+    status = _maintenance_status_raw(rd)
+    if reassign:
+        if status != "ASSIGNED":
+            return False, "Only assigned requests can be re-assigned"
+    elif status != "PENDING":
+        return False, "Request is not pending"
+
+    code = _maintenance_normalize_code(assignee_code)
+    options = _maintenance_assignee_options(rd.get("department") or "")
+    label = _maintenance_assignee_label(options, code)
+    if not label:
+        return False, "Invalid assignee"
+
+    if reassign and code == _maintenance_normalize_code(rd.get("assigned_to_code") or ""):
+        return False, "Choose a different assignee"
+
+    assignee_wa = _maintenance_assignee_wa_for_code(db, code)
+    if not assignee_wa:
+        return False, f"Could not find WhatsApp for {label}. Check users in Firestore."
+
+    now = datetime.now(timezone.utc)
+    actor = (getattr(current_user, "email", None) or "maintenance_portal").strip()
+    old_wa = (rd.get("assigned_to_wa") or "").strip() if reassign else ""
+    employee_wa = (rd.get("employee") or "").strip()
+
+    update = {
+        "maintenance_status": "ASSIGNED",
+        "assigned_to": label,
+        "assigned_to_code": code,
+        "assigned_to_wa": assignee_wa,
+        "assigned_by": actor,
+        "assigned_at": now,
+    }
+    if reassign:
+        update["previous_assignee"] = rd.get("assigned_to") or ""
+        update["previous_assignee_code"] = rd.get("assigned_to_code") or ""
+        update["previous_assignee_wa"] = rd.get("assigned_to_wa") or ""
+        update["reassigned_at"] = now
+    try:
+        ref.update(update)
+    except Exception as e:
+        app.logger.exception("maintenance assign failed request_id=%s", request_id)
+        return False, _firestore_user_message(e)
+
+    updated = ref.get().to_dict() or {**rd, **update}
+    _maintenance_send_assign_notifications(
+        updated,
+        request_id=request_id,
+        assignee_wa=assignee_wa,
+        assignee_label=label,
+        reassign=reassign,
+        old_assignee_wa=old_wa,
+        employee_wa=employee_wa,
+    )
+    app.logger.info(
+        "maintenance %s request_id=%s assignee=%s by=%s",
+        "reassign" if reassign else "assign",
+        request_id,
+        code,
+        actor,
+    )
     return True, None
 
 
@@ -5936,11 +6225,16 @@ def _render_ppc_page(tab: str):
     ist_today = _ist_today_date()
     selected_day = _parse_security_table_date(request.args.get("date"), ist_today)
     vehicle_requests = []
+    maintenance_requests = []
     firestore_error = None
     if tab == "logistics":
         vehicle_requests, firestore_error = fetch_logistics_vehicle_requests(
             ist_day=selected_day,
             jmd_route_filter=None,
+        )
+    elif tab == "maintenance":
+        maintenance_requests, firestore_error = fetch_maintenance_requests(
+            ist_day=selected_day,
         )
     return render_template(
         "ppc.html",
@@ -5948,6 +6242,7 @@ def _render_ppc_page(tab: str):
         ppc_tabs=tabs,
         selected_tab=tab,
         vehicle_requests=vehicle_requests,
+        maintenance_requests=maintenance_requests,
         firestore_error=firestore_error,
         selected_date_iso=selected_day.strftime("%Y-%m-%d"),
         can_delete_requests=_user_is_admin(),
@@ -6200,6 +6495,61 @@ def logistics_cancel():
     ok, err = _logistics_cancel_vehicle(payload.get("request_id") or "")
     if not ok:
         return jsonify({"ok": False, "error": err or "Could not cancel"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/maintenance/api/assignees", methods=["GET"])
+@login_required
+def maintenance_assignees():
+    if not _user_can_access_maintenance():
+        abort(403)
+    db, err = _get_firestore_client()
+    if err:
+        return jsonify({"ok": False, "error": err}), 500
+    request_id = (request.args.get("request_id") or "").strip()
+    if not request_id:
+        return jsonify({"ok": False, "error": "Missing request_id"}), 400
+    _ref, rd, load_err = _maintenance_load_request(db, request_id)
+    if load_err:
+        return jsonify({"ok": False, "error": load_err}), 400
+    options = _maintenance_assignee_options(rd.get("department") or "")
+    current = _maintenance_normalize_code(rd.get("assigned_to_code") or "")
+    return jsonify({
+        "ok": True,
+        "assignees": options,
+        "current_assignee_code": current,
+    })
+
+
+@app.route("/maintenance/api/assign", methods=["POST"])
+@login_required
+def maintenance_assign():
+    if not _user_can_access_maintenance():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    ok, err = _maintenance_assign(
+        payload.get("request_id") or "",
+        payload.get("assignee_code") or "",
+        reassign=False,
+    )
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not assign"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/maintenance/api/reassign", methods=["POST"])
+@login_required
+def maintenance_reassign():
+    if not _user_can_access_maintenance():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    ok, err = _maintenance_assign(
+        payload.get("request_id") or "",
+        payload.get("assignee_code") or "",
+        reassign=True,
+    )
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not re-assign"}), 400
     return jsonify({"ok": True})
 
 
