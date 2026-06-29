@@ -7,6 +7,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import certifi
@@ -15,6 +16,36 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
+
+_PORTAL_CONFIG_LOADED = False
+
+
+def _bootstrap_portal_config() -> None:
+    """Load portal_config.env (non-secrets) — Flask does not use Interakt/bot_config.env."""
+    global _PORTAL_CONFIG_LOADED
+    if _PORTAL_CONFIG_LOADED:
+        return
+    _PORTAL_CONFIG_LOADED = True
+    path = Path(__file__).resolve().parent / "portal_config.env"
+    if not path.is_file():
+        return
+    applied = 0
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key or key == "INTERAKT_API_KEY":
+            continue
+        if not os.environ.get(key):
+            os.environ[key] = value.strip()
+            applied += 1
+    if applied:
+        logger.info("Loaded portal_config.env (%s keys)", applied)
+
+
+_bootstrap_portal_config()
 
 INTERAKT_MESSAGE_URL = "https://api.interakt.ai/v1/public/message/"
 INTERAKT_TRACK_USERS_URL = "https://api.interakt.ai/v1/public/track/users/"
@@ -32,6 +63,13 @@ def wa_id_to_phone(wa_id: str) -> str:
 
 def _api_key() -> str:
     return (os.getenv("INTERAKT_API_KEY") or "").strip()
+
+
+def _require_api_key() -> str:
+    key = _api_key()
+    if not key:
+        raise ValueError("INTERAKT_API_KEY is not set")
+    return key
 
 
 def _headers() -> dict[str, str]:
@@ -115,9 +153,7 @@ def ensure_customer(phone: str, *, name: str = "") -> bool:
 
 
 def send_text(wa_id: str, text: str, *, callback_data: str = "") -> None:
-    if not _api_key():
-        logger.warning("INTERAKT_API_KEY not set — skip WhatsApp text to %s", wa_id)
-        return
+    _require_api_key()
     phone = wa_id_to_phone(wa_id)
     payload: dict[str, Any] = {
         "countryCode": "+91",
@@ -139,9 +175,7 @@ def send_template(
     callback_data: str = "",
     contact_name: str = "",
 ) -> None:
-    if not _api_key():
-        logger.warning("INTERAKT_API_KEY not set — skip template to %s", phone)
-        return
+    _require_api_key()
     ensure_customer(phone, name=contact_name or "Contact")
     template: dict[str, Any] = {
         "name": template_name.strip(),
@@ -168,9 +202,7 @@ def send_reply_buttons(
     callback_data: str = "",
     contact_name: str = "",
 ) -> None:
-    if not _api_key():
-        logger.warning("INTERAKT_API_KEY not set — skip buttons to %s", phone)
-        return
+    _require_api_key()
     ensure_customer(phone, name=contact_name or "Contact")
     wa_buttons = []
     for btn_id, label in buttons[:3]:
@@ -233,23 +265,20 @@ def _logistics_department_name() -> str:
 
 
 def staff_wa_for_assignee_code(db, assignee_code: str) -> str:
-    """Resolve logistics staff WhatsApp id from employee_id code (Firestore users)."""
+    """Resolve staff WhatsApp id from employee_id (Firestore users doc id)."""
     code = _normalize_assignee_code(assignee_code)
     if not code or db is None:
         return ""
-    dept = _logistics_department_name()
     try:
-        snaps = db.collection("users").where("department", "==", dept).stream()
+        for snap in db.collection("users").stream():
+            ud = snap.to_dict() or {}
+            emp_id = _normalize_assignee_code(ud.get("employee_id") or "")
+            if emp_id == code:
+                return (snap.id or "").strip()
     except Exception:
         logger.exception(
-            "logistics staff wa lookup failed dept=%s code=%s", dept, assignee_code
+            "logistics staff wa lookup failed code=%s", assignee_code
         )
-        return ""
-    for snap in snaps:
-        ud = snap.to_dict() or {}
-        emp_id = _normalize_assignee_code(ud.get("employee_id") or "")
-        if emp_id == code:
-            return (snap.id or "").strip()
     return ""
 
 
@@ -400,6 +429,34 @@ def notify_vehicle_assignee(
     can_start = rd.get("assignee_can_start") is not False
     body = _assignee_notify_body(rd, display_name)
     template_name = _assignee_template_name()
+    body_values = _assignee_template_body_values(rd, display_name)
+
+    # Utility template first — works outside the 24h session (drivers rarely message the bot).
+    if template_name:
+        try:
+            send_template(
+                phone,
+                template_name,
+                language_code=_assignee_template_language(),
+                body_values=body_values,
+                callback_data=rid,
+                contact_name=display_name,
+            )
+            logger.info(
+                "vehicle assignee template sent wa=%s request_id=%s template=%s fields=%s",
+                assignee_wa,
+                request_id,
+                template_name,
+                len(body_values),
+            )
+            return
+        except Exception:
+            logger.exception(
+                "vehicle assignee template failed wa=%s request_id=%s template=%s",
+                assignee_wa,
+                request_id,
+                template_name,
+            )
 
     if has_active_whatsapp_session(db, assignee_wa):
         try:
@@ -414,48 +471,32 @@ def notify_vehicle_assignee(
             else:
                 send_text(assignee_wa, body)
             logger.info(
-                "vehicle assignee session message sent wa=%s request_id=%s",
+                "vehicle assignee session fallback sent wa=%s request_id=%s",
                 assignee_wa,
                 request_id,
             )
             return
         except Exception:
             logger.exception(
-                "vehicle assignee session notify failed wa=%s request_id=%s",
+                "vehicle assignee session fallback failed wa=%s request_id=%s",
                 assignee_wa,
                 request_id,
             )
 
-    if template_name:
-        try:
-            send_template(
-                phone,
-                template_name,
-                language_code=_assignee_template_language(),
-                body_values=_assignee_template_body_values(rd, display_name),
-                callback_data=rid,
-                contact_name=display_name,
-            )
-            logger.info(
-                "vehicle assignee template sent wa=%s request_id=%s template=%s",
-                assignee_wa,
-                request_id,
-                template_name,
-            )
-            return
-        except Exception:
-            logger.exception(
-                "vehicle assignee template failed wa=%s request_id=%s template=%s",
-                assignee_wa,
-                request_id,
-                template_name,
-            )
-
-    logger.warning(
-        "skip vehicle assignee notify wa=%s request_id=%s (no active session and template send failed)",
-        assignee_wa,
-        request_id,
-    )
+    try:
+        fallback = body + "\n\nReply *Start* when you are ready."
+        send_text(assignee_wa, fallback, callback_data=rid)
+        logger.info(
+            "vehicle assignee plain-text fallback sent wa=%s request_id=%s",
+            assignee_wa,
+            request_id,
+        )
+    except Exception:
+        logger.exception(
+            "vehicle assignee notify failed all channels wa=%s request_id=%s",
+            assignee_wa,
+            request_id,
+        )
 
 
 def _vehicle_purpose_line(rd: dict) -> str:

@@ -2594,6 +2594,12 @@ LOGISTICS_EXTERNAL_VENDORS: tuple[tuple[str, str], ...] = (
     ("chella_transport", "Chella Transport"),
 )
 
+LOGISTICS_INTERNAL_ASSIGNEES: tuple[tuple[str, str], ...] = (
+    ("adc239", "Arun Selvam"),
+    ("adc324", "Pandiarajan"),
+    ("sri079", "Manikandan C"),
+)
+
 LOGISTICS_INTERNAL_FLEET: tuple[tuple[str, str], ...] = (
     ("dost_3271", "Dost-3271"),
     ("dost_2568", "Dost-2568"),
@@ -2630,24 +2636,14 @@ def _logistics_vehicle_trip_started(rd: dict) -> bool:
 
 
 def _logistics_staff_options(db) -> list[dict]:
-    dept = _logistics_department_name()
     rows: list[dict] = []
-    try:
-        snaps = db.collection("users").where("department", "==", dept).stream()
-    except Exception:
-        app.logger.exception("logistics staff query failed dept=%s", dept)
-        return rows
-    for snap in snaps:
-        ud = snap.to_dict() or {}
-        emp_id = (ud.get("employee_id") or "").strip()
-        if not emp_id:
-            continue
+    for code, label in LOGISTICS_INTERNAL_ASSIGNEES:
+        norm = _logistics_normalize_code(code)
         rows.append({
-            "code": _logistics_normalize_code(emp_id),
-            "label": (ud.get("name") or emp_id).strip(),
-            "wa_id": snap.id,
+            "code": norm,
+            "label": label,
+            "wa_id": vehicle_notify.staff_wa_for_assignee_code(db, norm),
         })
-    rows.sort(key=lambda item: item["label"].lower())
     return rows
 
 
