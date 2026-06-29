@@ -2659,13 +2659,7 @@ def _logistics_assignee_options(db, vehicle_type: str) -> list[dict]:
 
 
 def _logistics_staff_wa_for_code(db, assignee_code: str) -> str:
-    code = _logistics_normalize_code(assignee_code)
-    if not code:
-        return ""
-    for item in _logistics_staff_options(db):
-        if item["code"] == code:
-            return (item.get("wa_id") or "").strip()
-    return ""
+    return vehicle_notify.staff_wa_for_assignee_code(db, assignee_code)
 
 
 def _logistics_assignee_label(options: list[dict], code: str) -> str:
@@ -2920,22 +2914,33 @@ def _logistics_send_assign_notifications(
             assignee_code=assignee_code,
             assignee_label=assignee_label,
         )
-        display = vehicle_notify.sentence_case_name(assignee_label)
-        if reassign and old_assignee_wa:
+    except Exception:
+        app.logger.exception(
+            "vehicle assignee notify failed request_id=%s", request_id
+        )
+
+    display = vehicle_notify.sentence_case_name(assignee_label)
+    if reassign and old_assignee_wa:
+        try:
             vehicle_notify.send_text(
                 old_assignee_wa,
                 f"The request has been re-assigned to {display}. Thanks.",
             )
-        if employee_wa:
+        except Exception:
+            app.logger.exception(
+                "vehicle previous assignee notify failed request_id=%s", request_id
+            )
+    if employee_wa:
+        try:
             if reassign:
                 msg = f"Your vehicle request has been re-assigned to {display}."
             else:
                 msg = f"Your vehicle request has been assigned to {display}."
             vehicle_notify.send_text(employee_wa, msg)
-    except Exception:
-        app.logger.exception(
-            "logistics WhatsApp notify failed request_id=%s", request_id
-        )
+        except Exception:
+            app.logger.exception(
+                "vehicle requester notify failed request_id=%s", request_id
+            )
 
 
 def _logistics_assign_vehicle(
@@ -2981,7 +2986,14 @@ def _logistics_assign_vehicle(
     if is_internal and not fleet_label:
         return False, "Please select a vehicle"
 
-    staff_wa = _logistics_staff_wa_for_code(db, code) if is_internal else ""
+    staff_wa = vehicle_notify.staff_wa_for_assignee_code(db, code) if is_internal else ""
+    if is_internal and not staff_wa:
+        app.logger.warning(
+            "logistics assign: no WhatsApp id for internal assignee code=%s label=%s request_id=%s",
+            code,
+            label,
+            request_id,
+        )
     now = datetime.now(timezone.utc)
     actor = (getattr(current_user, "email", None) or "logistics_portal").strip()
     old_wa = (rd.get("assigned_to_wa") or "").strip() if reassign else ""
@@ -3089,6 +3101,7 @@ MAINTENANCE_PDC_ASSIGNEES: tuple[tuple[str, str], ...] = (
 MAINTENANCE_CNC_FET_SEC_ASSIGNEES: tuple[tuple[str, str], ...] = (
     ("adc012", "MURUGESAN"),
     ("adc093", "KANDAN"),
+    ("sri079", "MANIKANDAN C"),
 )
 
 
@@ -3269,28 +3282,49 @@ def _maintenance_send_assign_notifications(
     old_assignee_wa: str = "",
     employee_wa: str = "",
 ) -> None:
+    display = vehicle_notify.sentence_case_name(assignee_label)
     try:
         maintenance_notify.notify_maintenance_assignee(
             rd,
             request_id=request_id,
             assignee_wa=assignee_wa,
         )
-        display = vehicle_notify.sentence_case_name(assignee_label)
-        if reassign and old_assignee_wa:
+    except Exception:
+        app.logger.exception(
+            "maintenance assignee template notify failed request_id=%s", request_id
+        )
+
+    if reassign and old_assignee_wa:
+        try:
+            old_phone = vehicle_notify.wa_id_to_phone(old_assignee_wa)
+            old_name = (rd.get("previous_assignee") or "").strip()
+            vehicle_notify.ensure_customer(old_phone, name=old_name or "Technician")
             vehicle_notify.send_text(
                 old_assignee_wa,
                 f"The maintenance request has been re-assigned to {display}. Thanks.",
             )
-        if employee_wa:
+        except Exception:
+            app.logger.exception(
+                "maintenance previous assignee notify failed request_id=%s old_wa=%s",
+                request_id,
+                old_assignee_wa,
+            )
+
+    if employee_wa:
+        try:
             if reassign:
                 msg = f"Your maintenance request has been re-assigned to {display}."
             else:
                 msg = f"Your maintenance request has been assigned to {display}."
+            emp_phone = vehicle_notify.wa_id_to_phone(employee_wa)
+            vehicle_notify.ensure_customer(
+                emp_phone, name=(rd.get("employee_name") or "Supervisor")
+            )
             vehicle_notify.send_text(employee_wa, msg)
-    except Exception:
-        app.logger.exception(
-            "maintenance WhatsApp notify failed request_id=%s", request_id
-        )
+        except Exception:
+            app.logger.exception(
+                "maintenance employee assign notify failed request_id=%s", request_id
+            )
 
 
 def _maintenance_assign(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -219,11 +220,44 @@ def _normalize_vehicle_type(raw: str) -> str:
     return key
 
 
+def _normalize_assignee_code(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (value or "").strip().lower()).strip("_")
+
+
+def _logistics_department_name() -> str:
+    return (
+        os.getenv("VEHICLE_INTERNAL_ASSIGN_DEPARTMENT")
+        or os.getenv("LOGISTICS_DEPARTMENT_NAME")
+        or "LOGISTICS"
+    ).strip().upper()
+
+
+def staff_wa_for_assignee_code(db, assignee_code: str) -> str:
+    """Resolve logistics staff WhatsApp id from employee_id code (Firestore users)."""
+    code = _normalize_assignee_code(assignee_code)
+    if not code or db is None:
+        return ""
+    dept = _logistics_department_name()
+    try:
+        snaps = db.collection("users").where("department", "==", dept).stream()
+    except Exception:
+        logger.exception(
+            "logistics staff wa lookup failed dept=%s code=%s", dept, assignee_code
+        )
+        return ""
+    for snap in snaps:
+        ud = snap.to_dict() or {}
+        emp_id = _normalize_assignee_code(ud.get("employee_id") or "")
+        if emp_id == code:
+            return (snap.id or "").strip()
+    return ""
+
+
 def _assignee_template_name() -> str:
     return (
         os.getenv("VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_NAME")
         or os.getenv("VEHICLE_INTERNAL_ASSIGNEE_TEMPLATE_NAME")
-        or ""
+        or "vehicle_assignee_message"
     ).strip()
 
 
@@ -244,6 +278,15 @@ def _assignee_template_body_fields() -> list[str]:
     return [k.strip().lower() for k in raw.split(",") if k.strip()]
 
 
+def _assignee_time_label(rd: dict) -> str:
+    raw = rd.get("required_at")
+    if raw is None or raw == "":
+        return "—"
+    if isinstance(raw, str):
+        return raw.strip() or "—"
+    return str(raw).strip() or "—"
+
+
 def _assignee_template_values(rd: dict, assignee_name: str) -> dict[str, str]:
     vehicle = (
         (rd.get("fleet_vehicle_label") or "").strip()
@@ -258,7 +301,7 @@ def _assignee_template_values(rd: dict, assignee_name: str) -> dict[str, str]:
         "category": rd.get("destination_category_label") or "—",
         "destination": rd.get("destination_label") or "—",
         "vehicle": vehicle,
-        "time": rd.get("required_at") or "—",
+        "time": _assignee_time_label(rd),
     }
 
 
@@ -281,6 +324,12 @@ def _assignee_notify_body(rd: dict, assignee_name: str) -> str:
 def _assignee_template_body_values(rd: dict, assignee_name: str) -> list[str]:
     values = _assignee_template_values(rd, assignee_name)
     fields = _assignee_template_body_fields()
+    if len(fields) != 8:
+        logger.warning(
+            "VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_BODY_FIELDS should list exactly 8 "
+            "fields for vehicle_assignee_message; got %s",
+            len(fields),
+        )
     return [values.get(key, "—")[:1024] for key in fields]
 
 
@@ -325,12 +374,22 @@ def notify_vehicle_assignee(
 ) -> None:
     """Notify internal assignee with Start button / template (same as WhatsApp bot)."""
     if _normalize_vehicle_type(rd.get("vehicle_type") or "") != "in_house":
+        logger.info(
+            "vehicle assignee notify skipped — not internal request_id=%s type=%s",
+            request_id,
+            rd.get("vehicle_type"),
+        )
         return
 
     assignee_wa = (rd.get("assigned_to_wa") or "").strip()
+    if not assignee_wa and assignee_code:
+        assignee_wa = staff_wa_for_assignee_code(db, assignee_code)
     if not assignee_wa:
         logger.warning(
-            "vehicle assignee notify skipped — no wa for code=%s", assignee_code
+            "vehicle assignee notify skipped — no wa for code=%s label=%s request_id=%s",
+            assignee_code,
+            assignee_label,
+            request_id,
         )
         return
 
@@ -378,21 +437,24 @@ def notify_vehicle_assignee(
                 contact_name=display_name,
             )
             logger.info(
-                "vehicle assignee template sent wa=%s request_id=%s",
+                "vehicle assignee template sent wa=%s request_id=%s template=%s",
                 assignee_wa,
                 request_id,
+                template_name,
             )
             return
         except Exception:
             logger.exception(
-                "vehicle assignee template failed wa=%s request_id=%s",
+                "vehicle assignee template failed wa=%s request_id=%s template=%s",
                 assignee_wa,
                 request_id,
+                template_name,
             )
 
     logger.warning(
-        "skip vehicle assignee notify wa=%s (set VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_NAME)",
+        "skip vehicle assignee notify wa=%s request_id=%s (no active session and template send failed)",
         assignee_wa,
+        request_id,
     )
 
 
