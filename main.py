@@ -2173,6 +2173,7 @@ def _it_send_assign_notifications(
     old_engineer_wa: str = "",
     employee_wa: str = "",
 ) -> None:
+    display = vehicle_notify.sentence_case_name(engineer_label)
     try:
         import it_notify
 
@@ -2181,20 +2182,42 @@ def _it_send_assign_notifications(
             request_id=request_id,
             engineer_wa=engineer_wa,
         )
-        display = vehicle_notify.sentence_case_name(engineer_label)
-        if reassign and old_engineer_wa:
+    except Exception:
+        app.logger.exception(
+            "IT engineer template notify failed request_id=%s", request_id
+        )
+
+    if reassign and old_engineer_wa:
+        try:
+            old_phone = vehicle_notify.wa_id_to_phone(old_engineer_wa)
+            old_name = (rd.get("previous_engineer_name") or "").strip()
+            vehicle_notify.ensure_customer(old_phone, name=old_name or "IT Engineer")
             vehicle_notify.send_text(
                 old_engineer_wa,
                 f"The IT ticket has been re-assigned to {display}. Thanks.",
             )
-        if employee_wa:
+        except Exception:
+            app.logger.exception(
+                "IT previous engineer notify failed request_id=%s old_wa=%s",
+                request_id,
+                old_engineer_wa,
+            )
+
+    if employee_wa:
+        try:
             if reassign:
                 msg = f"Your IT request has been re-assigned to {display}."
             else:
                 msg = f"Your IT request has been assigned to {display}."
+            emp_phone = vehicle_notify.wa_id_to_phone(employee_wa)
+            vehicle_notify.ensure_customer(
+                emp_phone, name=(rd.get("employee_name") or "Employee")
+            )
             vehicle_notify.send_text(employee_wa, msg)
-    except Exception:
-        app.logger.exception("IT WhatsApp notify failed request_id=%s", request_id)
+        except Exception:
+            app.logger.exception(
+                "IT employee assign notify failed request_id=%s", request_id
+            )
 
 
 def _it_assign(
