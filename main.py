@@ -1128,33 +1128,12 @@ def _fetch_security_approver_status(db):
     if cached is not None:
         return cached
     approvers = [
-        ("JMD I", _wa_id_from_env("JMD_I_WHATSAPP_NUMBER", "JMD_WHATSAPP_NUMBER")),
-        ("JMD II", _wa_id_from_env("JMD_II_WHATSAPP_NUMBER")),
+        ("JMD1", _wa_id_from_env("JMD_I_WHATSAPP_NUMBER", "JMD_WHATSAPP_NUMBER")),
+        ("JMD2", _wa_id_from_env("JMD_II_WHATSAPP_NUMBER")),
         ("MD", _wa_id_from_env("MD_WHATSAPP_NUMBER")),
     ]
     rows = [_approver_status_row(db, role, wa_id) for role, wa_id in approvers]
     _cache_set("security_approver_status", rows)
-    return rows
-
-
-def _fetch_it_approver_status(db):
-    """IT Manager + engineers — online/offline from Firestore ``approver_status``."""
-    cached = _cache_get("it_approver_status")
-    if cached is not None:
-        return cached
-    rows: list[dict] = []
-    manager_wa = _wa_id_from_env(
-        "IT_MANAGER_WHATSAPP_NUMBER", "IT_MANAGER_WHATSAPP"
-    )
-    rows.append(_approver_status_row(db, "IT Manager", manager_wa))
-    for slot, _phone in enumerate(IT_ENGINEER_PHONES, start=1):
-        wa = _it_engineer_wa_for_slot(slot)
-        name = _it_lookup_user_name(db, wa) if wa else ""
-        label = f"IT Engineer {slot}"
-        if name:
-            label = f"{label} ({name})"
-        rows.append(_approver_status_row(db, label, wa))
-    _cache_set("it_approver_status", rows)
     return rows
 
 
@@ -6550,6 +6529,7 @@ SECURITY_TABS = (
     ("on-duty", "OD Request"),
     ("visitor-request", "Visitor Request"),
     ("vehicle-request", "Vehicle Request"),
+    ("approver-status", "Approver Status"),
 )
 
 HR_TABS = (
@@ -6558,7 +6538,6 @@ HR_TABS = (
 
 IT_TABS = (
     ("it-request", "IT Request"),
-    ("approver-status", "Approver Status"),
 )
 
 
@@ -6628,10 +6607,7 @@ def _render_requests_page(
             firestore_error = err
         else:
             try:
-                if page_key == "it":
-                    approver_status_rows = _fetch_it_approver_status(db)
-                else:
-                    approver_status_rows = _fetch_security_approver_status(db)
+                approver_status_rows = _fetch_security_approver_status(db)
             except Exception as e:
                 app.logger.exception("Firestore approver status fetch failed")
                 firestore_error = _firestore_user_message(e)
