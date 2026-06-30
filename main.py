@@ -2597,7 +2597,6 @@ LOGISTICS_EXTERNAL_VENDORS: tuple[tuple[str, str], ...] = (
 LOGISTICS_INTERNAL_ASSIGNEES: tuple[tuple[str, str], ...] = (
     ("adc239", "Arun Selvam"),
     ("adc324", "Pandiarajan"),
-    ("sri079", "Manikandan C"),
 )
 
 LOGISTICS_INTERNAL_FLEET: tuple[tuple[str, str], ...] = (
@@ -3288,6 +3287,15 @@ def _maintenance_send_assign_notifications(
     except Exception:
         app.logger.exception(
             "maintenance assignee template notify failed request_id=%s", request_id
+        )
+
+    try:
+        maintenance_notify.notify_maintenance_jmd_md_assigned(
+            rd, request_id=request_id
+        )
+    except Exception:
+        app.logger.exception(
+            "maintenance JMD/MD assign notify failed request_id=%s", request_id
         )
 
     if reassign and old_assignee_wa:

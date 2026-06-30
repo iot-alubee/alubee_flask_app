@@ -17,6 +17,7 @@ from vehicle_notify import (
     _phone_to_10,
     _post_message,
     ensure_customer,
+    send_template,
     sentence_case_name,
     wa_id_to_phone,
 )
@@ -169,3 +170,114 @@ def notify_maintenance_assignee(
             request_id,
             photo_url[:80],
         )
+
+
+def _wa_from_env(*keys: str) -> str:
+    for key in keys:
+        raw = (os.getenv(key) or "").strip()
+        if not raw:
+            continue
+        digits = _phone_to_10(raw)
+        if digits:
+            return f"whatsapp:+91{digits}"
+    return ""
+
+
+def _jmd_wa_for_route(route: str) -> str:
+    r = (route or "").strip().upper()
+    if r in ("JMD2", "UNIT_II", "UNIT2", "UNIT-2", "UNIT 2"):
+        return _wa_from_env("JMD_II_WHATSAPP_NUMBER")
+    return _wa_from_env("JMD_I_WHATSAPP_NUMBER", "JMD_WHATSAPP_NUMBER")
+
+
+def _jmd_md_assign_recipients(route: str) -> list[str]:
+    out: list[str] = []
+    for wa in (_jmd_wa_for_route(route), _wa_from_env("MD_WHATSAPP_NUMBER")):
+        candidate = (wa or "").strip()
+        if not candidate:
+            continue
+        if candidate.lower() in {x.lower() for x in out}:
+            continue
+        out.append(candidate)
+    return out
+
+
+def _jmd_md_assign_template_name() -> str:
+    return (
+        os.getenv("MAINTENANCE_JMD_MD_ASSIGN_TEMPLATE_NAME")
+        or os.getenv("MAINTENANCE_JMD_MD_CLOSE_TEMPLATE_NAME")
+        or "maintenance_jmd_md_notification"
+    ).strip()
+
+
+def _jmd_md_assign_template_language() -> str:
+    return (
+        os.getenv("MAINTENANCE_JMD_MD_ASSIGN_TEMPLATE_LANGUAGE_CODE")
+        or os.getenv("MAINTENANCE_JMD_MD_CLOSE_TEMPLATE_LANGUAGE_CODE")
+        or "en"
+    ).strip()
+
+
+def _jmd_md_assign_template_body_fields() -> list[str]:
+    raw = (
+        os.getenv("MAINTENANCE_JMD_MD_ASSIGN_TEMPLATE_BODY_FIELDS")
+        or "requester,unit,department,machine,issue,requested_at,assigned_to"
+    ).strip()
+    return [k.strip().lower() for k in raw.split(",") if k.strip()]
+
+
+def _jmd_md_assign_template_body_values(rd: dict) -> list[str]:
+    values = {
+        "requester": sentence_case_name(rd.get("employee_name") or "—"),
+        "unit": _unit_label(rd.get("jmd_route") or ""),
+        "department": (rd.get("department") or "—").strip(),
+        "machine": (rd.get("machine_no_label") or "—").strip(),
+        "issue": (rd.get("issue_category_label") or "—").strip(),
+        "assigned_to": sentence_case_name(rd.get("assigned_to") or "—"),
+        "addressed_by": sentence_case_name(rd.get("assigned_to") or "—"),
+        "requested_at": _format_ist(rd.get("requested_datetime")) or "—",
+    }
+    fields = _jmd_md_assign_template_body_fields()
+    return [values.get(key, "—")[:1024] for key in fields]
+
+
+def notify_maintenance_jmd_md_assigned(rd: dict, *, request_id: str) -> None:
+    """Notify unit JMD + MD when maintenance is assigned to a technician."""
+    template_name = _jmd_md_assign_template_name()
+    if not template_name:
+        logger.warning("MAINTENANCE_JMD_MD_ASSIGN_TEMPLATE_NAME not set")
+        return
+    route = rd.get("jmd_route") or ""
+    recipients = _jmd_md_assign_recipients(route)
+    if not recipients:
+        logger.warning(
+            "maintenance JMD/MD assign notify skipped — no recipients "
+            "request_id=%s route=%s",
+            request_id,
+            route,
+        )
+        return
+    body_values = _jmd_md_assign_template_body_values(rd)
+    rid = (request_id or "").strip()
+    for wa in recipients:
+        phone = wa_id_to_phone(wa)
+        try:
+            send_template(
+                phone,
+                template_name,
+                language_code=_jmd_md_assign_template_language(),
+                body_values=body_values,
+                callback_data=rid[:512],
+                contact_name="Approver",
+            )
+            logger.info(
+                "maintenance JMD/MD assign template sent wa=%s request_id=%s",
+                wa,
+                request_id,
+            )
+        except Exception:
+            logger.exception(
+                "maintenance JMD/MD assign template failed wa=%s request_id=%s",
+                wa,
+                request_id,
+            )
