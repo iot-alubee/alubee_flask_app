@@ -227,6 +227,8 @@ def approval_cell_class(value):
         return "security-appr-na"
     if s == "offline":
         return "security-appr-offline"
+    if "auto" in s and "approv" in s:
+        return "security-appr-approved"
     if "cancel" in s:
         return "security-appr-na"
     if (
@@ -1093,6 +1095,33 @@ def _format_firestore_datetime_ist(val):
         return ""
 
 
+def _approver_status_row(db, role: str, wa_id: str) -> dict:
+    if not wa_id:
+        return {
+            "role": role,
+            "wa_id": "Not configured",
+            "availability": "Not configured",
+            "status_cell_class": "security-appr-pending",
+            "updated_at": "",
+            "saved_role": "",
+        }
+    snap = db.collection(APPROVER_STATUS_COLLECTION).document(wa_id.lower()).get()
+    data = snap.to_dict() if snap.exists else {}
+    availability = (data.get("availability") or "online").strip().lower()
+    if availability != "offline":
+        availability = "online"
+    return {
+        "role": role,
+        "wa_id": wa_id,
+        "availability": availability.title(),
+        "status_cell_class": "security-appr-na"
+        if availability == "online"
+        else "security-appr-offline",
+        "updated_at": _format_firestore_datetime_ist(data.get("updated_at")),
+        "saved_role": (data.get("role") or "").strip(),
+    }
+
+
 def _fetch_security_approver_status(db):
     """JMD/MD availability from Firestore ``approver_status`` (default online)."""
     cached = _cache_get("security_approver_status")
@@ -1103,47 +1132,43 @@ def _fetch_security_approver_status(db):
         ("JMD II", _wa_id_from_env("JMD_II_WHATSAPP_NUMBER")),
         ("MD", _wa_id_from_env("MD_WHATSAPP_NUMBER")),
     ]
-    rows = []
-    for role, wa_id in approvers:
-        if not wa_id:
-            rows.append({
-                "role": role,
-                "wa_id": "Not configured",
-                "availability": "Not configured",
-                "status_cell_class": "security-appr-pending",
-                "updated_at": "",
-                "saved_role": "",
-            })
-            continue
-        snap = db.collection(APPROVER_STATUS_COLLECTION).document(wa_id.lower()).get()
-        data = snap.to_dict() if snap.exists else {}
-        availability = (data.get("availability") or "online").strip().lower()
-        if availability != "offline":
-            availability = "online"
-        rows.append({
-            "role": role,
-            "wa_id": wa_id,
-            "availability": availability.title(),
-            "status_cell_class": "security-appr-na"
-            if availability == "online"
-            else "security-appr-offline",
-            "updated_at": _format_firestore_datetime_ist(data.get("updated_at")),
-            "saved_role": (data.get("role") or "").strip(),
-        })
+    rows = [_approver_status_row(db, role, wa_id) for role, wa_id in approvers]
     _cache_set("security_approver_status", rows)
+    return rows
+
+
+def _fetch_it_approver_status(db):
+    """IT Manager + engineers — online/offline from Firestore ``approver_status``."""
+    cached = _cache_get("it_approver_status")
+    if cached is not None:
+        return cached
+    rows: list[dict] = []
+    manager_wa = _wa_id_from_env(
+        "IT_MANAGER_WHATSAPP_NUMBER", "IT_MANAGER_WHATSAPP"
+    )
+    rows.append(_approver_status_row(db, "IT Manager", manager_wa))
+    for slot, _phone in enumerate(IT_ENGINEER_PHONES, start=1):
+        wa = _it_engineer_wa_for_slot(slot)
+        name = _it_lookup_user_name(db, wa) if wa else ""
+        label = f"IT Engineer {slot}"
+        if name:
+            label = f"{label} ({name})"
+        rows.append(_approver_status_row(db, label, wa))
+    _cache_set("it_approver_status", rows)
     return rows
 
 
 def _jmd_approved_for_od(d: dict) -> bool:
     jmd_u = (d.get("jmd_status") or "").strip().upper()
-    return jmd_u == "APPROVED"
+    return jmd_u in ("APPROVED", "AUTO_APPROVE")
 
 
 def _md_offline_bypass_on_request(d: dict) -> bool:
     """Persisted when JMD approved while MD was offline — stays even when MD is back online."""
     if d.get("md_offline_bypass"):
         return True
-    return (d.get("md_status") or "").strip().upper() == "OFFLINE"
+    md_u = (d.get("md_status") or "").strip().upper()
+    return md_u in ("OFFLINE", "AUTO_APPROVE")
 
 
 def _legacy_md_offline_bypass_candidate(d: dict) -> bool:
@@ -1170,7 +1195,7 @@ def _maybe_persist_legacy_md_offline_bypass(
         if writes_left[0] <= 0:
             return d
         writes_left[0] -= 1
-    ref.update({"md_status": "OFFLINE", "md_offline_bypass": True})
+    ref.update({"md_status": "AUTO_APPROVE", "md_offline_bypass": True})
     snap = ref.get()
     return snap.to_dict() if snap.exists else d
 
@@ -1181,7 +1206,7 @@ def _md_step_satisfied_for_security(
     md_u = (d.get("md_status") or "").strip().upper()
     if md_u == "DENIED":
         return False
-    if _md_offline_bypass_on_request(d) or md_u == "APPROVED":
+    if _md_offline_bypass_on_request(d) or md_u in ("APPROVED", "AUTO_APPROVE"):
         return True
     jmd_ok = _jmd_approved_for_visitor(d) if for_visitor else _jmd_approved_for_od(d)
     if not jmd_ok:
@@ -1327,6 +1352,8 @@ def _visitor_matches_unit_filter(d: dict, jmd_route_filter: str | None) -> bool:
 def _format_approval_label(status: str) -> str:
     """Dashboard approval column — avoid sentence_case breaking Roman numerals."""
     s = (status or "").strip().upper()
+    if s == "auto approve" or (s == "auto_approve"):
+        return "Auto Approve"
     if s == "APPROVED":
         return "Approved"
     if s == "DENIED":
@@ -1348,11 +1375,15 @@ def _aggregate_dual_jmd_status(d: dict) -> str:
     ii = (d.get("jmd_ii_status") or "PENDING").strip().upper()
     if "DENIED" in (i, ii):
         return "DENIED"
-    if i == "APPROVED" and ii == "APPROVED":
+    i_done = i in ("APPROVED", "AUTO_APPROVE")
+    ii_done = ii in ("APPROVED", "AUTO_APPROVE")
+    if i_done and ii_done:
+        if i == "AUTO_APPROVE" and ii == "AUTO_APPROVE":
+            return "AUTO_APPROVE"
         return "APPROVED"
     jmd = (d.get("jmd_status") or "").strip().upper()
-    if jmd == "APPROVED":
-        return "APPROVED"
+    if jmd in ("APPROVED", "AUTO_APPROVE"):
+        return jmd
     if jmd == "DENIED":
         return "DENIED"
     return "PENDING"
@@ -1486,8 +1517,10 @@ def _od_approval_statuses_for_display(
             jmd_display = _format_approval_label(jmd_raw)
             md_display = _format_approval_label(md_raw)
     if _md_offline_bypass_on_request(d) or _legacy_md_offline_bypass_candidate(d):
-        md_display = "Offline"
-    elif md_offline and md_display not in ("Approved", "Denied"):
+        md_display = "Auto Approve"
+    elif d.get("jmd_offline_bypass") and jmd_display not in ("Approved", "Denied", "Auto Approve"):
+        jmd_display = "Auto Approve"
+    elif md_offline and md_display not in ("Approved", "Denied", "Auto Approve"):
         md_display = "Offline"
     return jmd_display, md_display
 
@@ -1733,7 +1766,8 @@ def _security_record_od_gate(request_id: str, action: str, odo_reading):
 
 def _jmd_approved_for_visitor(d: dict) -> bool:
     if d.get("visitor_dual_jmd"):
-        return _aggregate_dual_jmd_status(d).strip().upper() == "APPROVED"
+        agg = _aggregate_dual_jmd_status(d).strip().upper()
+        return agg in ("APPROVED", "AUTO_APPROVE")
     return _jmd_approved_for_od(d)
 
 
@@ -1758,7 +1792,7 @@ def _visitor_security_fully_approved(d: dict, md_offline: bool) -> bool:
 def _backfill_visitor_otp_if_md_offline(
     ref, d: dict, *, writes_left: list[int] | None = None
 ) -> dict:
-    """Legacy rows only: OTP + OFFLINE md_status (do not write on every refresh)."""
+    """Legacy rows only: OTP + AUTO_APPROVE md_status (do not write on every refresh)."""
     if not _legacy_md_offline_bypass_candidate(d):
         return d
     if writes_left is not None:
@@ -1770,7 +1804,7 @@ def _backfill_visitor_otp_if_md_offline(
         patch["visitor_otp"] = f"{secrets.randbelow(1_000_000):06d}"
         patch["guest_otp_sent"] = False
     if (d.get("md_status") or "").strip().upper() == "PENDING":
-        patch["md_status"] = "OFFLINE"
+        patch["md_status"] = "AUTO_APPROVE"
         patch["md_offline_bypass"] = True
     if patch:
         ref.update(patch)
@@ -3567,16 +3601,16 @@ def _permission_jmd_approved_for_gate(d: dict) -> bool:
     if d.get("cancelled_by_employee"):
         return False
     jmd = (d.get("jmd_status") or "").strip().upper()
-    if jmd != "APPROVED":
+    if jmd not in ("APPROVED", "AUTO_APPROVE"):
         return False
     md = (d.get("md_status") or "").strip().upper()
     if md in ("", "N/A"):
         return True
-    if md == "OFFLINE" and d.get("md_offline_bypass"):
+    if md in ("OFFLINE", "AUTO_APPROVE") and d.get("md_offline_bypass"):
         return True
     if md in ("AWAITING_JMD", "PENDING"):
         return False
-    return md == "APPROVED"
+    return md in ("APPROVED", "AUTO_APPROVE")
 
 
 def _permission_security_gate_flags(d: dict) -> dict:
@@ -6524,6 +6558,7 @@ HR_TABS = (
 
 IT_TABS = (
     ("it-request", "IT Request"),
+    ("approver-status", "Approver Status"),
 )
 
 
@@ -6593,7 +6628,10 @@ def _render_requests_page(
             firestore_error = err
         else:
             try:
-                approver_status_rows = _fetch_security_approver_status(db)
+                if page_key == "it":
+                    approver_status_rows = _fetch_it_approver_status(db)
+                else:
+                    approver_status_rows = _fetch_security_approver_status(db)
             except Exception as e:
                 app.logger.exception("Firestore approver status fetch failed")
                 firestore_error = _firestore_user_message(e)
