@@ -2610,6 +2610,7 @@ LOGISTICS_EXTERNAL_VENDORS: tuple[tuple[str, str], ...] = (
 LOGISTICS_INTERNAL_ASSIGNEES: tuple[tuple[str, str], ...] = (
     ("adc239", "Arun Selvam"),
     ("adc324", "Pandiarajan"),
+    ("cl004", "Ajay"),
 )
 
 LOGISTICS_INTERNAL_FLEET: tuple[tuple[str, str], ...] = (
