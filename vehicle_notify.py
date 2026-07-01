@@ -49,6 +49,11 @@ _bootstrap_portal_config()
 INTERAKT_MESSAGE_URL = "https://api.interakt.ai/v1/public/message/"
 INTERAKT_TRACK_USERS_URL = "https://api.interakt.ai/v1/public/track/users/"
 
+_VEHICLE_ASSIGNEE_BODY_FIELDS_DEFAULT = (
+    "assignee_name,requester,from,request_type,category,destination,vehicle,time"
+)
+_VEHICLE_ASSIGNEE_BODY_FIELD_COUNT = 8
+
 _ROMAN_NUMERAL_CHARS = frozenset("IVXLCDM")
 
 
@@ -165,6 +170,11 @@ def send_text(wa_id: str, text: str, *, callback_data: str = "") -> None:
     _post_message(payload)
 
 
+def _template_body_value_text(value: object) -> str:
+    text = str(value).strip() if value is not None else ""
+    return (text[:1024] if text else "-")
+
+
 def send_template(
     phone: str,
     template_name: str,
@@ -180,8 +190,8 @@ def send_template(
         "name": template_name.strip(),
         "languageCode": (language_code or "en").strip(),
     }
-    if body_values:
-        template["bodyValues"] = [str(v)[:1024] for v in body_values]
+    if body_values is not None:
+        template["bodyValues"] = [_template_body_value_text(v) for v in body_values]
     payload: dict[str, Any] = {
         "countryCode": "+91",
         "phoneNumber": _phone_to_10(phone),
@@ -283,33 +293,47 @@ def _assignee_template_body_fields() -> list[str]:
     raw = (
         os.getenv("VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_BODY_FIELDS")
         or os.getenv("VEHICLE_INTERNAL_ASSIGNEE_TEMPLATE_BODY_FIELDS")
-        or "assignee_name,requester,from,request_type,category,destination,vehicle,time"
+        or _VEHICLE_ASSIGNEE_BODY_FIELDS_DEFAULT
     ).strip()
-    return [k.strip().lower() for k in raw.split(",") if k.strip()]
+    fields = [k.strip().lower() for k in raw.split(",") if k.strip()]
+    default_fields = [
+        k.strip().lower()
+        for k in _VEHICLE_ASSIGNEE_BODY_FIELDS_DEFAULT.split(",")
+        if k.strip()
+    ]
+    if len(fields) != _VEHICLE_ASSIGNEE_BODY_FIELD_COUNT:
+        logger.warning(
+            "VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_BODY_FIELDS invalid (got %s fields); "
+            "using default %s fields",
+            len(fields),
+            _VEHICLE_ASSIGNEE_BODY_FIELD_COUNT,
+        )
+        return default_fields
+    return fields
 
 
 def _assignee_time_label(rd: dict) -> str:
     raw = rd.get("required_at")
     if raw is None or raw == "":
-        return "—"
+        return "-"
     if isinstance(raw, str):
-        return raw.strip() or "—"
-    return str(raw).strip() or "—"
+        return raw.strip() or "-"
+    return str(raw).strip() or "-"
 
 
 def _assignee_template_values(rd: dict, assignee_name: str) -> dict[str, str]:
     vehicle = (
         (rd.get("fleet_vehicle_label") or "").strip()
         or (rd.get("external_vehicle_number") or "").strip()
-        or "—"
+        or "-"
     )
     return {
-        "assignee_name": sentence_case_name(assignee_name or "—"),
-        "requester": sentence_case_name(rd.get("employee_name") or "—"),
-        "from": rd.get("from_unit_label") or "—",
-        "request_type": rd.get("request_type_label") or "—",
-        "category": rd.get("destination_category_label") or "—",
-        "destination": rd.get("destination_label") or "—",
+        "assignee_name": sentence_case_name(assignee_name or "-"),
+        "requester": sentence_case_name(rd.get("employee_name") or "-"),
+        "from": (rd.get("from_unit_label") or "").strip() or "-",
+        "request_type": (rd.get("request_type_label") or "").strip() or "-",
+        "category": (rd.get("destination_category_label") or "").strip() or "-",
+        "destination": (rd.get("destination_label") or "").strip() or "-",
         "vehicle": vehicle,
         "time": _assignee_time_label(rd),
     }
@@ -318,13 +342,12 @@ def _assignee_template_values(rd: dict, assignee_name: str) -> dict[str, str]:
 def _assignee_template_body_values(rd: dict, assignee_name: str) -> list[str]:
     values = _assignee_template_values(rd, assignee_name)
     fields = _assignee_template_body_fields()
-    if len(fields) != 8:
-        logger.warning(
-            "VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_BODY_FIELDS should list exactly 8 "
-            "fields for vehicle_assignee_message; got %s",
-            len(fields),
+    body = [_template_body_value_text(values.get(key, "-")) for key in fields]
+    if len(body) != _VEHICLE_ASSIGNEE_BODY_FIELD_COUNT:
+        raise ValueError(
+            f"vehicle_assignee_v02 requires {_VEHICLE_ASSIGNEE_BODY_FIELD_COUNT} body values, got {len(body)}"
         )
-    return [values.get(key, "—")[:1024] for key in fields]
+    return body
 
 
 def notify_vehicle_assignee(
@@ -367,6 +390,12 @@ def notify_vehicle_assignee(
         raise ValueError("VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_NAME is not configured")
 
     body_values = _assignee_template_body_values(rd, display_name)
+    logger.info(
+        "vehicle assignee template prepare request_id=%s template=%s body_count=%s",
+        request_id,
+        template_name,
+        len(body_values),
+    )
     if not ensure_customer(phone, name=display_name):
         logger.warning(
             "vehicle assignee track user failed phone=%s request_id=%s",
