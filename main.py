@@ -2679,6 +2679,14 @@ def _logistics_assignee_label(options: list[dict], code: str) -> str:
     return ""
 
 
+def _logistics_assignee_wa(options: list[dict], code: str) -> str:
+    norm = _logistics_normalize_code(code)
+    for item in options:
+        if item.get("code") == norm:
+            return (item.get("wa_id") or "").strip()
+    return ""
+
+
 def _logistics_fleet_vehicle_label(code: str) -> str:
     norm = _logistics_normalize_code(code)
     norm = _LOGISTICS_FLEET_ALIASES.get(norm, norm)
@@ -2910,23 +2918,29 @@ def _logistics_send_assign_notifications(
     request_id: str,
     assignee_code: str,
     assignee_label: str,
+    assignee_wa: str = "",
+    is_internal: bool = False,
     reassign: bool = False,
     old_assignee_wa: str = "",
     employee_wa: str = "",
-) -> None:
-    """Best-effort WhatsApp messages after portal assign / re-assign."""
-    try:
-        vehicle_notify.notify_vehicle_assignee(
-            db,
-            rd,
-            request_id=request_id,
-            assignee_code=assignee_code,
-            assignee_label=assignee_label,
-        )
-    except Exception:
-        app.logger.exception(
-            "vehicle assignee notify failed request_id=%s", request_id
-        )
+) -> str | None:
+    """WhatsApp messages after portal assign / re-assign. Returns warning if assignee notify fails."""
+    warning: str | None = None
+    if is_internal:
+        try:
+            vehicle_notify.notify_vehicle_assignee(
+                db,
+                rd,
+                request_id=request_id,
+                assignee_code=assignee_code,
+                assignee_label=assignee_label,
+                assignee_wa=assignee_wa,
+            )
+        except Exception as exc:
+            app.logger.exception(
+                "vehicle assignee notify failed request_id=%s", request_id
+            )
+            warning = f"Assignment saved but assignee WhatsApp failed: {exc}"
 
     display = vehicle_notify.sentence_case_name(assignee_label)
     if reassign and old_assignee_wa:
@@ -2950,6 +2964,7 @@ def _logistics_send_assign_notifications(
             app.logger.exception(
                 "vehicle requester notify failed request_id=%s", request_id
             )
+    return warning
 
 
 def _logistics_assign_vehicle(
@@ -2995,14 +3010,18 @@ def _logistics_assign_vehicle(
     if is_internal and not fleet_label:
         return False, "Please select a vehicle"
 
-    staff_wa = vehicle_notify.staff_wa_for_assignee_code(db, code) if is_internal else ""
-    if is_internal and not staff_wa:
-        app.logger.warning(
-            "logistics assign: no WhatsApp id for internal assignee code=%s label=%s request_id=%s",
-            code,
-            label,
-            request_id,
+    staff_wa = ""
+    if is_internal:
+        staff_wa = _logistics_assignee_wa(options, code) or vehicle_notify.staff_wa_for_assignee_code(
+            db, code
         )
+        if not staff_wa:
+            return (
+                False,
+                f"Could not find WhatsApp for {label}. Check users in Firestore (employee_id / mobile).",
+            )
+        if not vehicle_notify._api_key():
+            return False, "WhatsApp is not configured on this portal (INTERAKT_API_KEY missing)."
     now = datetime.now(timezone.utc)
     actor = (getattr(current_user, "email", None) or "logistics_portal").strip()
     old_wa = (rd.get("assigned_to_wa") or "").strip() if reassign else ""
@@ -3034,12 +3053,14 @@ def _logistics_assign_vehicle(
         return False, str(e)
 
     updated = ref.get().to_dict() or {}
-    _logistics_send_assign_notifications(
+    notify_warning = _logistics_send_assign_notifications(
         db,
         updated,
         request_id=request_id,
         assignee_code=code,
         assignee_label=label,
+        assignee_wa=staff_wa,
+        is_internal=is_internal,
         reassign=reassign,
         old_assignee_wa=old_wa,
         employee_wa=employee_wa,
@@ -3051,7 +3072,7 @@ def _logistics_assign_vehicle(
         label,
         actor,
     )
-    return True, None
+    return True, notify_warning
 
 
 def _logistics_cancel_vehicle(request_id: str) -> tuple[bool, str | None]:
@@ -6791,7 +6812,10 @@ def logistics_assign():
     )
     if not ok:
         return jsonify({"ok": False, "error": err or "Could not assign"}), 400
-    return jsonify({"ok": True})
+    resp: dict = {"ok": True}
+    if err:
+        resp["warning"] = err
+    return jsonify(resp)
 
 
 @app.route("/logistics/api/reassign", methods=["POST"])
@@ -6809,7 +6833,10 @@ def logistics_reassign():
     )
     if not ok:
         return jsonify({"ok": False, "error": err or "Could not re-assign"}), 400
-    return jsonify({"ok": True})
+    resp: dict = {"ok": True}
+    if err:
+        resp["warning"] = err
+    return jsonify(resp)
 
 
 @app.route("/logistics/api/cancel", methods=["POST"])

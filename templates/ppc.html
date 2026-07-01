@@ -729,6 +729,9 @@
 						assignSubmit.disabled = false;
 						return;
 					}
+					if (x.j && x.j.warning) {
+						window.alert(x.j.warning);
+					}
 					window.location.reload();
 				})
 				.catch(function () {

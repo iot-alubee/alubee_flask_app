@@ -235,7 +235,22 @@ def staff_wa_for_assignee_code(db, assignee_code: str) -> str:
     code = _normalize_assignee_code(assignee_code)
     if not code or db is None:
         return ""
+    raw = (assignee_code or "").strip()
+    candidates: list[str] = []
+    for value in (raw, raw.upper(), code):
+        if value and value not in candidates:
+            candidates.append(value)
     try:
+        for emp_id in candidates:
+            for snap in (
+                db.collection("users")
+                .where("employee_id", "==", emp_id)
+                .limit(1)
+                .stream()
+            ):
+                wa = (snap.id or "").strip()
+                if wa:
+                    return wa
         for snap in db.collection("users").stream():
             ud = snap.to_dict() or {}
             emp_id = _normalize_assignee_code(ud.get("employee_id") or "")
@@ -319,6 +334,7 @@ def notify_vehicle_assignee(
     request_id: str,
     assignee_code: str,
     assignee_label: str,
+    assignee_wa: str = "",
 ) -> None:
     """Notify internal assignee via WhatsApp template only (vehicle_assignee_v02)."""
     if _normalize_vehicle_type(rd.get("vehicle_type") or "") != "in_house":
@@ -329,55 +345,50 @@ def notify_vehicle_assignee(
         )
         return
 
-    assignee_wa = (rd.get("assigned_to_wa") or "").strip()
-    if not assignee_wa and assignee_code:
-        assignee_wa = staff_wa_for_assignee_code(db, assignee_code)
-    if not assignee_wa:
-        logger.warning(
-            "vehicle assignee notify skipped — no wa for code=%s label=%s request_id=%s",
-            assignee_code,
-            assignee_label,
-            request_id,
+    wa = (assignee_wa or rd.get("assigned_to_wa") or "").strip()
+    if not wa and assignee_code:
+        wa = staff_wa_for_assignee_code(db, assignee_code)
+    if not wa:
+        raise ValueError(
+            f"No WhatsApp id for assignee {assignee_label or assignee_code or 'unknown'}"
         )
-        return
+
+    if not _api_key():
+        raise ValueError("INTERAKT_API_KEY is not set on the portal")
 
     display_name = sentence_case_name(assignee_label or "Assignee")
-    phone = wa_id_to_phone(assignee_wa)
+    phone = wa_id_to_phone(wa)
+    if not phone:
+        raise ValueError(f"Invalid WhatsApp id for assignee {display_name}")
+
     rid = (request_id or "").strip()
     template_name = _assignee_template_name()
     if not template_name:
-        logger.error(
-            "vehicle assignee notify skipped — VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_NAME not set request_id=%s",
-            request_id,
-        )
-        return
+        raise ValueError("VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_NAME is not configured")
 
     body_values = _assignee_template_body_values(rd, display_name)
-
-    try:
-        send_template(
+    if not ensure_customer(phone, name=display_name):
+        logger.warning(
+            "vehicle assignee track user failed phone=%s request_id=%s",
             phone,
-            template_name,
-            language_code=_assignee_template_language(),
-            body_values=body_values,
-            callback_data=rid,
-            contact_name=display_name,
-        )
-        logger.info(
-            "vehicle assignee template sent wa=%s request_id=%s template=%s fields=%s",
-            assignee_wa,
             request_id,
-            template_name,
-            len(body_values),
         )
-    except Exception:
-        logger.exception(
-            "vehicle assignee template failed wa=%s request_id=%s template=%s",
-            assignee_wa,
-            request_id,
-            template_name,
-        )
-        raise
+
+    send_template(
+        phone,
+        template_name,
+        language_code=_assignee_template_language(),
+        body_values=body_values,
+        callback_data=rid,
+        contact_name=display_name,
+    )
+    logger.info(
+        "vehicle assignee template sent wa=%s request_id=%s template=%s fields=%s",
+        wa,
+        request_id,
+        template_name,
+        len(body_values),
+    )
 
 
 def _vehicle_purpose_line(rd: dict) -> str:
