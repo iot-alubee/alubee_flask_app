@@ -6,7 +6,6 @@ import logging
 import os
 import re
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -194,39 +193,6 @@ def send_template(
     _post_message(payload)
 
 
-def send_reply_buttons(
-    phone: str,
-    body_text: str,
-    buttons: list[tuple[str, str]],
-    *,
-    callback_data: str = "",
-    contact_name: str = "",
-) -> None:
-    _require_api_key()
-    ensure_customer(phone, name=contact_name or "Contact")
-    wa_buttons = []
-    for btn_id, label in buttons[:3]:
-        wa_buttons.append({
-            "type": "reply",
-            "reply": {"id": str(btn_id)[:256], "title": str(label)[:20]},
-        })
-    payload: dict[str, Any] = {
-        "countryCode": "+91",
-        "phoneNumber": _phone_to_10(phone),
-        "type": "InteractiveButton",
-        "data": {
-            "message": {
-                "type": "button",
-                "body": {"text": body_text},
-                "action": {"buttons": wa_buttons},
-            },
-        },
-    }
-    if callback_data:
-        payload["callbackData"] = callback_data[:512]
-    _post_message(payload)
-
-
 def _sentence_case_word(word: str) -> str:
     if not word:
         return word
@@ -286,7 +252,7 @@ def _assignee_template_name() -> str:
     return (
         os.getenv("VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_NAME")
         or os.getenv("VEHICLE_INTERNAL_ASSIGNEE_TEMPLATE_NAME")
-        or "vehicle_assignee_message"
+        or "vehicle_assignee_v02"
     ).strip()
 
 
@@ -334,22 +300,6 @@ def _assignee_template_values(rd: dict, assignee_name: str) -> dict[str, str]:
     }
 
 
-def _assignee_notify_body(rd: dict, assignee_name: str) -> str:
-    v = _assignee_template_values(rd, assignee_name)
-    first = (assignee_name or "there").strip().split()[0] if assignee_name else "there"
-    return (
-        f"Hi {first}, new request has been assigned to you. Please refer below.\n\n"
-        f"Requester: {v['requester']}\n"
-        f"From: {v['from']}\n"
-        f"Request Type: {v['request_type']}\n"
-        f"Category: {v['category']}\n"
-        f"Destination: {v['destination']}\n"
-        f"Vehicle: {v['vehicle']}\n"
-        f"Time: {v['time']}\n\n"
-        "Click 'Start' once you are ready!"
-    )
-
-
 def _assignee_template_body_values(rd: dict, assignee_name: str) -> list[str]:
     values = _assignee_template_values(rd, assignee_name)
     fields = _assignee_template_body_fields()
@@ -362,37 +312,6 @@ def _assignee_template_body_values(rd: dict, assignee_name: str) -> list[str]:
     return [values.get(key, "—")[:1024] for key in fields]
 
 
-def _whatsapp_session_hours() -> float:
-    try:
-        return float(os.getenv("WHATSAPP_SESSION_HOURS") or "24")
-    except ValueError:
-        return 24.0
-
-
-def has_active_whatsapp_session(db, wa_id: str) -> bool:
-    wa = (wa_id or "").strip()
-    if not wa or db is None:
-        return False
-    try:
-        snap = db.collection("whatsapp_activity").document(wa).get()
-    except Exception:
-        logger.exception("whatsapp_activity lookup failed wa=%s", wa)
-        return False
-    if not snap.exists:
-        return False
-    last = (snap.to_dict() or {}).get("last_inbound_at")
-    if not last:
-        return False
-    if hasattr(last, "timestamp"):
-        last_dt = datetime.fromtimestamp(last.timestamp(), tz=timezone.utc)
-    elif isinstance(last, datetime):
-        last_dt = last if last.tzinfo else last.replace(tzinfo=timezone.utc)
-    else:
-        return False
-    age_hours = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
-    return age_hours < _whatsapp_session_hours()
-
-
 def notify_vehicle_assignee(
     db,
     rd: dict,
@@ -401,7 +320,7 @@ def notify_vehicle_assignee(
     assignee_code: str,
     assignee_label: str,
 ) -> None:
-    """Notify internal assignee with Start button / template (same as WhatsApp bot)."""
+    """Notify internal assignee via WhatsApp template only (vehicle_assignee_v02)."""
     if _normalize_vehicle_type(rd.get("vehicle_type") or "") != "in_house":
         logger.info(
             "vehicle assignee notify skipped — not internal request_id=%s type=%s",
@@ -425,78 +344,40 @@ def notify_vehicle_assignee(
     display_name = sentence_case_name(assignee_label or "Assignee")
     phone = wa_id_to_phone(assignee_wa)
     rid = (request_id or "").strip()
-    start_id = f"VEHICLE_START_{rid}"[:256]
-    can_start = rd.get("assignee_can_start") is not False
-    body = _assignee_notify_body(rd, display_name)
     template_name = _assignee_template_name()
+    if not template_name:
+        logger.error(
+            "vehicle assignee notify skipped — VEHICLE_ASSIGNEE_NOTIFY_TEMPLATE_NAME not set request_id=%s",
+            request_id,
+        )
+        return
+
     body_values = _assignee_template_body_values(rd, display_name)
 
-    # Utility template first — works outside the 24h session (drivers rarely message the bot).
-    if template_name:
-        try:
-            send_template(
-                phone,
-                template_name,
-                language_code=_assignee_template_language(),
-                body_values=body_values,
-                callback_data=rid,
-                contact_name=display_name,
-            )
-            logger.info(
-                "vehicle assignee template sent wa=%s request_id=%s template=%s fields=%s",
-                assignee_wa,
-                request_id,
-                template_name,
-                len(body_values),
-            )
-            return
-        except Exception:
-            logger.exception(
-                "vehicle assignee template failed wa=%s request_id=%s template=%s",
-                assignee_wa,
-                request_id,
-                template_name,
-            )
-
-    if has_active_whatsapp_session(db, assignee_wa):
-        try:
-            if can_start:
-                send_reply_buttons(
-                    phone,
-                    body,
-                    [(start_id, "Start")],
-                    callback_data=rid,
-                    contact_name=display_name,
-                )
-            else:
-                send_text(assignee_wa, body)
-            logger.info(
-                "vehicle assignee session fallback sent wa=%s request_id=%s",
-                assignee_wa,
-                request_id,
-            )
-            return
-        except Exception:
-            logger.exception(
-                "vehicle assignee session fallback failed wa=%s request_id=%s",
-                assignee_wa,
-                request_id,
-            )
-
     try:
-        fallback = body + "\n\nReply *Start* when you are ready."
-        send_text(assignee_wa, fallback, callback_data=rid)
+        send_template(
+            phone,
+            template_name,
+            language_code=_assignee_template_language(),
+            body_values=body_values,
+            callback_data=rid,
+            contact_name=display_name,
+        )
         logger.info(
-            "vehicle assignee plain-text fallback sent wa=%s request_id=%s",
+            "vehicle assignee template sent wa=%s request_id=%s template=%s fields=%s",
             assignee_wa,
             request_id,
+            template_name,
+            len(body_values),
         )
     except Exception:
         logger.exception(
-            "vehicle assignee notify failed all channels wa=%s request_id=%s",
+            "vehicle assignee template failed wa=%s request_id=%s template=%s",
             assignee_wa,
             request_id,
+            template_name,
         )
+        raise
 
 
 def _vehicle_purpose_line(rd: dict) -> str:
