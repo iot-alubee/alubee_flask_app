@@ -3223,10 +3223,10 @@ def _maintenance_status_label(raw: str) -> str:
     return labels.get(key, (raw or "—").strip() or "—")
 
 
-def _maintenance_duration_label(requested_dt, closed_dt) -> str:
-    """Human-readable duration from request raised → technician closed."""
-    start = _firestore_value_to_utc_datetime(requested_dt)
-    end = _firestore_value_to_utc_datetime(closed_dt)
+def _maintenance_duration_label(start_dt, end_dt) -> str:
+    """Human-readable duration between two timestamps (e.g. assigned → technician closed)."""
+    start = _firestore_value_to_utc_datetime(start_dt)
+    end = _firestore_value_to_utc_datetime(end_dt)
     if not start or not end:
         return "—"
     seconds = max(0, int((end - start).total_seconds()))
@@ -3279,7 +3279,9 @@ def _maintenance_assignee_wa_for_code(db, assignee_code: str) -> str:
 def _maintenance_row(d, snap_id):
     status_raw = _maintenance_status_raw(d)
     photo_url = (d.get("issue_photo_url") or "").strip()
-    technician_closed_raw = d.get("technician_closed_at")
+    technician_closed_raw = (
+        d.get("technician_first_closed_at") or d.get("technician_closed_at")
+    )
     supervisor_confirmed_raw = d.get("completed_at")
     return {
         "request_id": d.get("request_id") or snap_id,
@@ -3301,7 +3303,7 @@ def _maintenance_row(d, snap_id):
         "technician_closed_at": _format_firestore_time_ist_12h(technician_closed_raw) or "—",
         "supervisor_confirmed_at": _format_firestore_time_ist_12h(supervisor_confirmed_raw) or "—",
         "repair_duration": _maintenance_duration_label(
-            d.get("requested_datetime"), technician_closed_raw
+            d.get("assigned_at"), technician_closed_raw
         ),
         "can_assign": status_raw == "PENDING",
         "can_reassign": status_raw == "ASSIGNED",
