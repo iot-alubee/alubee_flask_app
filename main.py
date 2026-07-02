@@ -78,7 +78,10 @@ SECURITY_UNIT_I_EMAIL = "security.1@alubee.com"
 SECURITY_UNIT_II_EMAIL = "security.2@alubee.com"
 HR_SECURITY_EMAIL = "hr@alubee.com"
 IT_EMAIL = "it@alubee.com"
-LOGISTICS_EMAIL = "ppc@alubee.com"
+PPC_EMAIL_1 = "ppc.1@alubee.com"
+PPC_EMAIL_2 = "ppc.2@alubee.com"
+
+_PPC_PORTAL_PAGES = ("logistics", "maintenance")
 
 # Built-in accounts (SQLite). Change passwords after deploy in production.
 _DEFAULT_ADMIN = ("admin@alubee.com", "admin123")
@@ -87,7 +90,8 @@ _DEFAULT_BUILTIN_VIEWERS = (
     (SECURITY_UNIT_II_EMAIL, "security@alubee", ("security",)),
     (HR_SECURITY_EMAIL, "hr@alubee", ("hr",)),
     (IT_EMAIL, "it@alubee", ("it",)),
-    (LOGISTICS_EMAIL, "ppc@alubee", ("logistics",)),
+    (PPC_EMAIL_1, "ppc.1@alubee", _PPC_PORTAL_PAGES),
+    (PPC_EMAIL_2, "ppc.2@alubee", _PPC_PORTAL_PAGES),
 )
 _VIEWER_LANDING_ROUTES = {
     "security": "security",
@@ -102,7 +106,8 @@ _BUILTIN_EMAIL_LANDING_PAGES = {
     SECURITY_UNIT_II_EMAIL: "security",
     HR_SECURITY_EMAIL: "hr",
     IT_EMAIL: "it",
-    LOGISTICS_EMAIL: "logistics",
+    PPC_EMAIL_1: "logistics",
+    PPC_EMAIL_2: "logistics",
 }
 
 _PORTAL_LANDING_PAGE_KEYS = ("security", "hr", "it", "logistics", "maintenance")
