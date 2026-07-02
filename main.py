@@ -3223,6 +3223,22 @@ def _maintenance_status_label(raw: str) -> str:
     return labels.get(key, (raw or "—").strip() or "—")
 
 
+def _maintenance_duration_label(requested_dt, closed_dt) -> str:
+    """Human-readable duration from request raised → technician closed."""
+    start = _firestore_value_to_utc_datetime(requested_dt)
+    end = _firestore_value_to_utc_datetime(closed_dt)
+    if not start or not end:
+        return "—"
+    seconds = max(0, int((end - start).total_seconds()))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    if minutes > 0:
+        return f"{minutes}m"
+    return f"{secs}s"
+
+
 def _maintenance_assignee_options(dept: str) -> list[dict]:
     d = _maintenance_normalize_dept(dept)
     if d == "PDC":
@@ -3263,6 +3279,8 @@ def _maintenance_assignee_wa_for_code(db, assignee_code: str) -> str:
 def _maintenance_row(d, snap_id):
     status_raw = _maintenance_status_raw(d)
     photo_url = (d.get("issue_photo_url") or "").strip()
+    technician_closed_raw = d.get("technician_closed_at")
+    supervisor_confirmed_raw = d.get("completed_at")
     return {
         "request_id": d.get("request_id") or snap_id,
         "employee_id": d.get("employee_id") or "",
@@ -3280,8 +3298,11 @@ def _maintenance_row(d, snap_id):
         "requested_date": _format_firestore_date_ist(d.get("requested_datetime")),
         "requested_time": _format_firestore_time_ist_12h(d.get("requested_datetime")),
         "assigned_at": _format_firestore_time_ist_12h(d.get("assigned_at")) or "—",
-        "completed_at": _format_firestore_time_ist_12h(d.get("completed_at")) or "—",
-        "time_taken": (d.get("time_taken") or "").strip() or "—",
+        "technician_closed_at": _format_firestore_time_ist_12h(technician_closed_raw) or "—",
+        "supervisor_confirmed_at": _format_firestore_time_ist_12h(supervisor_confirmed_raw) or "—",
+        "repair_duration": _maintenance_duration_label(
+            d.get("requested_datetime"), technician_closed_raw
+        ),
         "can_assign": status_raw == "PENDING",
         "can_reassign": status_raw == "ASSIGNED",
     }

@@ -314,10 +314,11 @@
 								<th>Status</th>
 								<th>Action</th>
 								<th>Assignee</th>
-								<th>Requested</th>
+								<th>Requested At</th>
 								<th>Assigned At</th>
-								<th>Completed At</th>
-								<th>Time Taken</th>
+								<th>Technician Closed</th>
+								<th>Supervisor Confirmed</th>
+								<th>Repair Duration</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -368,13 +369,14 @@
 								<td>{{ row.assigned_to|sentence_case }}</td>
 								<td class="cell-date">{{ row.requested_date }} {{ row.requested_time }}</td>
 								<td>{{ row.assigned_at }}</td>
-								<td>{{ row.completed_at }}</td>
-								<td>{{ row.time_taken }}</td>
+								<td>{{ row.technician_closed_at }}</td>
+								<td>{{ row.supervisor_confirmed_at }}</td>
+								<td>{{ row.repair_duration }}</td>
 							</tr>
 							{% endfor %}
 							{% else %}
 							<tr>
-								<td colspan="{% if can_delete_requests %}15{% else %}14{% endif %}" class="text-center text-muted py-5">No maintenance requests for this date.</td>
+								<td colspan="{% if can_delete_requests %}16{% else %}15{% endif %}" class="text-center text-muted py-5">No maintenance requests for this date.</td>
 							</tr>
 							{% endif %}
 						</tbody>
