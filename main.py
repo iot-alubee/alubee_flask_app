@@ -3168,6 +3168,43 @@ def _maintenance_unit_label(route: str) -> str:
     return "Unit I"
 
 
+def _maintenance_unit_for_session(unit_arg: str | None) -> tuple[str, bool]:
+    """
+    Unit filter for Maintenance tab: unit-i | unit-ii, and whether the user may change it.
+    ppc.1@alubee.com → Unit I (locked); ppc.2@alubee.com → Unit II (locked).
+    """
+    email = (getattr(current_user, "email", None) or "").strip().lower()
+    if email == PPC_EMAIL_1:
+        return "unit-i", True
+    if email == PPC_EMAIL_2:
+        return "unit-ii", True
+    unit = (unit_arg or "unit-i").strip().lower()
+    if unit not in ("unit-i", "unit-ii"):
+        unit = "unit-i"
+    return unit, False
+
+
+def _maintenance_user_jmd_route_filter() -> str | None:
+    """JMD route enforced for PPC viewers on maintenance APIs; None for admin/editor."""
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role in ("admin", "editor"):
+        return None
+    email = (getattr(current_user, "email", None) or "").strip().lower()
+    if email == PPC_EMAIL_1:
+        return "JMD1"
+    if email == PPC_EMAIL_2:
+        return "JMD2"
+    selected_unit, _ = _maintenance_unit_for_session(None)
+    return _parse_security_unit_filter(selected_unit)
+
+
+def _maintenance_enforce_request_unit(rd: dict) -> str | None:
+    filt = _maintenance_user_jmd_route_filter()
+    if filt and _request_jmd_route(rd) != filt:
+        return "This request belongs to another unit."
+    return None
+
+
 def _maintenance_status_raw(rd: dict) -> str:
     return (rd.get("maintenance_status") or "PENDING").strip().upper()
 
@@ -3253,11 +3290,14 @@ def _fetch_maintenance_requests_inner(
     db,
     *,
     ist_day=None,
+    jmd_route_filter: str | None = None,
     limit=300,
 ):
     buf = []
     for snap in _security_requests_snapshots(db, "MAINTENANCE"):
         d = snap.to_dict() or {}
+        if jmd_route_filter and _request_jmd_route(d) != jmd_route_filter:
+            continue
         ts = d.get("requested_datetime")
         if ist_day is not None:
             if _requested_datetime_ist_date(ts) != ist_day:
@@ -3289,8 +3329,11 @@ def _fetch_maintenance_requests_with_timeout(**kwargs):
         return [], _firestore_user_message(e)
 
 
-def fetch_maintenance_requests(ist_day=None):
-    return _fetch_maintenance_requests_with_timeout(ist_day=ist_day)
+def fetch_maintenance_requests(ist_day=None, jmd_route_filter: str | None = None):
+    return _fetch_maintenance_requests_with_timeout(
+        ist_day=ist_day,
+        jmd_route_filter=jmd_route_filter,
+    )
 
 
 def _maintenance_load_request(db, request_id: str):
@@ -3383,6 +3426,10 @@ def _maintenance_assign(
     ref, rd, err = _maintenance_load_request(db, request_id)
     if err:
         return False, err
+
+    unit_err = _maintenance_enforce_request_unit(rd)
+    if unit_err:
+        return False, unit_err
 
     status = _maintenance_status_raw(rd)
     if reassign:
@@ -6520,6 +6567,8 @@ def _render_ppc_page(tab: str):
     require_page(tab)
     ist_today = _ist_today_date()
     selected_day = _parse_security_table_date(request.args.get("date"), ist_today)
+    selected_unit = "unit-i"
+    unit_filter_locked = False
     vehicle_requests = []
     maintenance_requests = []
     firestore_error = None
@@ -6529,8 +6578,13 @@ def _render_ppc_page(tab: str):
             jmd_route_filter=None,
         )
     elif tab == "maintenance":
+        selected_unit, unit_filter_locked = _maintenance_unit_for_session(
+            request.args.get("unit")
+        )
+        jmd_route_filter = _parse_security_unit_filter(selected_unit)
         maintenance_requests, firestore_error = fetch_maintenance_requests(
             ist_day=selected_day,
+            jmd_route_filter=jmd_route_filter,
         )
     return render_template(
         "ppc.html",
@@ -6541,6 +6595,8 @@ def _render_ppc_page(tab: str):
         maintenance_requests=maintenance_requests,
         firestore_error=firestore_error,
         selected_date_iso=selected_day.strftime("%Y-%m-%d"),
+        selected_unit=selected_unit,
+        unit_filter_locked=unit_filter_locked,
         can_delete_requests=_user_is_admin(),
     )
 
@@ -6870,6 +6926,9 @@ def maintenance_assignees():
     _ref, rd, load_err = _maintenance_load_request(db, request_id)
     if load_err:
         return jsonify({"ok": False, "error": load_err}), 400
+    unit_err = _maintenance_enforce_request_unit(rd)
+    if unit_err:
+        return jsonify({"ok": False, "error": unit_err}), 403
     options = _maintenance_assignee_options(rd.get("department") or "")
     current = _maintenance_normalize_code(rd.get("assigned_to_code") or "")
     return jsonify({

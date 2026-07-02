@@ -115,7 +115,7 @@
 				<li class="nav-item" role="presentation">
 					<a
 						class="nav-link {% if selected_tab == tab_key %}active{% endif %}"
-						href="{{ url_for('logistics', tab=tab_key, date=selected_date_iso) }}"
+						href="{% if tab_key == 'maintenance' or selected_tab == 'maintenance' %}{{ url_for('logistics', tab=tab_key, date=selected_date_iso, unit=selected_unit) }}{% else %}{{ url_for('logistics', tab=tab_key, date=selected_date_iso) }}{% endif %}"
 						role="tab"
 						aria-selected="{% if selected_tab == tab_key %}true{% else %}false{% endif %}"
 					>{{ tab_label }}</a>
@@ -258,6 +258,25 @@
 						<div>
 							<label for="maintenance-date" class="form-label small mb-1">Date (IST)</label>
 							<input id="maintenance-date" type="date" name="date" class="form-control form-control-sm" value="{{ selected_date_iso }}">
+						</div>
+						<div>
+							<label for="maintenance-unit" class="form-label small mb-1">Unit</label>
+							{% if unit_filter_locked %}
+							<input type="hidden" name="unit" value="{{ selected_unit }}">
+							<input
+								id="maintenance-unit"
+								type="text"
+								class="form-control form-control-sm"
+								value="{% if selected_unit == 'unit-ii' %}Unit II{% else %}Unit I{% endif %}"
+								readonly
+								aria-readonly="true"
+							>
+							{% else %}
+							<select id="maintenance-unit" name="unit" class="form-select form-select-sm">
+								<option value="unit-i" {% if selected_unit == 'unit-i' %}selected{% endif %}>Unit I</option>
+								<option value="unit-ii" {% if selected_unit == 'unit-ii' %}selected{% endif %}>Unit II</option>
+							</select>
+							{% endif %}
 						</div>
 						<div class="pb-1">
 							<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="maintenance-refresh-today">Today</button>
@@ -944,7 +963,7 @@
 	var todayBtn = document.getElementById("maintenance-refresh-today");
 	if (todayBtn) {
 		todayBtn.addEventListener("click", function () {
-			window.location.href = {{ url_for('logistics', tab='maintenance') | tojson }};
+			window.location.href = {{ url_for('logistics', tab='maintenance', unit=selected_unit) | tojson }};
 		});
 	}
 
