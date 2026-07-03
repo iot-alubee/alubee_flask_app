@@ -870,6 +870,15 @@ def _firebase_project_id():
     )
 
 
+def _firebase_storage_bucket_name() -> str:
+    """Firebase Storage bucket for portal uploads (internal IT task documents, etc.)."""
+    explicit = (os.getenv("FIREBASE_STORAGE_BUCKET") or "").strip()
+    if explicit:
+        return explicit
+    # Do not derive from FIREBASE_PROJECT_ID — some Cloud Run services use a short/wrong id.
+    return "whatsapp-approval-system.firebasestorage.app"
+
+
 def _running_on_cloud_run():
     return bool(os.environ.get("K_SERVICE"))
 
@@ -2337,13 +2346,23 @@ def _internal_it_task_manager_actions(
     assignees: list[dict],
     assignee_statuses: dict[str, str],
     manager_status: str,
+    *,
+    task_for: str = "One time",
+    daily_from_date: str = "",
+    daily_to_date: str = "",
 ) -> list[str]:
     normalized = _normalize_manager_status(manager_status)
     if _internal_it_task_manager_is_terminal(normalized):
         return []
     actions: list[str] = []
     if _internal_it_task_all_assignees_completed(assignees, assignee_statuses):
-        actions.extend(["close", "continue"])
+        if task_for == "Daily":
+            from_day = _internal_it_task_parse_due_date(daily_from_date)
+            to_day = _internal_it_task_parse_due_date(daily_to_date)
+            if _internal_it_task_daily_closure_ready(from_day, to_day):
+                actions.extend(["close", "continue"])
+        else:
+            actions.extend(["close", "continue"])
     elif _internal_it_task_any_assignee_on_hold(assignees, assignee_statuses):
         actions.append("continue")
     elif _internal_it_task_any_assignee_on_delay(assignees, assignee_statuses):
@@ -2436,10 +2455,20 @@ def _can_manager_close_task(
     assignees: list[dict],
     assignee_statuses: dict[str, str],
     history_entries: list[dict] | None = None,
+    *,
+    task_for: str = "One time",
+    daily_from_date: str = "",
+    daily_to_date: str = "",
 ) -> bool:
     """Manager can review (Close/Continue) once every assignee is Completed."""
     del history_entries
-    return _internal_it_task_all_assignees_completed(assignees, assignee_statuses)
+    if not _internal_it_task_all_assignees_completed(assignees, assignee_statuses):
+        return False
+    if task_for == "Daily":
+        from_day = _internal_it_task_parse_due_date(daily_from_date)
+        to_day = _internal_it_task_parse_due_date(daily_to_date)
+        return _internal_it_task_daily_closure_ready(from_day, to_day)
+    return True
 
 
 def _internal_it_task_is_manager_actor(changed_by: str) -> bool:
@@ -2704,7 +2733,8 @@ def _internal_it_task_status_stats(
         "closed": 0,
     }
     for row in rows:
-        if _internal_it_task_due_period_match(row.get("due_date") or "", "overdue"):
+        effective_due = row.get("effective_due_date") or row.get("due_date") or ""
+        if _internal_it_task_due_period_match(effective_due, "overdue"):
             stats["overdue"] += 1
         bucket = bucket_fn(row)
         if bucket in stats:
@@ -2743,6 +2773,153 @@ def _internal_it_task_for(raw: str) -> str:
     return task_for
 
 
+def _internal_it_task_daily_dates(d: dict) -> tuple:
+    if _internal_it_task_for(d.get("task_for")) != "Daily":
+        return None, None
+    from_day = _internal_it_task_parse_due_date((d.get("daily_from_date") or "").strip())
+    to_day = _internal_it_task_parse_due_date(
+        (d.get("daily_to_date") or d.get("due_date") or "").strip(),
+    )
+    return from_day, to_day
+
+
+def _internal_it_task_daily_is_working_day(day) -> bool:
+    """Daily internal IT tasks are not active on Sundays."""
+    return day.weekday() != 6
+
+
+def _internal_it_task_daily_last_working_day(from_day, to_day):
+    if not from_day or not to_day:
+        return None
+    cursor = to_day
+    while cursor >= from_day:
+        if _internal_it_task_daily_is_working_day(cursor):
+            return cursor
+        cursor -= timedelta(days=1)
+    return None
+
+
+def _internal_it_task_daily_closure_ready(from_day, to_day, on_date=None) -> bool:
+    if not from_day or not to_day:
+        return False
+    on_date = on_date or _ist_today_date()
+    last_working = _internal_it_task_daily_last_working_day(from_day, to_day)
+    if not last_working:
+        return False
+    return on_date >= last_working
+
+
+def _internal_it_task_daily_log_from_doc(d: dict) -> dict[str, dict[str, str]]:
+    raw = d.get("daily_log") or {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for day_key, day_value in raw.items():
+        day = str(day_key or "").strip()[:10]
+        if not day or not isinstance(day_value, dict):
+            continue
+        out[day] = {
+            str(code): _normalize_assignee_status(status)
+            for code, status in day_value.items()
+            if str(code or "").strip()
+        }
+    return out
+
+
+def _internal_it_task_daily_active_on_date(d: dict, on_date=None) -> bool:
+    if _internal_it_task_for(d.get("task_for")) != "Daily":
+        return False
+    if _internal_it_task_manager_is_terminal(_normalize_manager_status(d.get("status"))):
+        return False
+    from_day, to_day = _internal_it_task_daily_dates(d)
+    if not from_day or not to_day:
+        return False
+    day = on_date or _ist_today_date()
+    return (
+        from_day <= day <= to_day
+        and _internal_it_task_daily_is_working_day(day)
+    )
+
+
+def _internal_it_task_stored_assignee_statuses(d: dict, assignees: list[dict]) -> dict[str, str]:
+    raw = d.get("assignee_statuses") or {}
+    legacy_default = _normalize_assignee_status(d.get("assignee_status") or "Assigned")
+    raw_status = (d.get("status") or "").strip()
+    if raw_status in INTERNAL_IT_TASK_ASSIGNEE_STATUSES or raw_status == "Progress":
+        legacy_default = _normalize_assignee_status(raw_status)
+    elif raw_status == "Completed":
+        legacy_default = "Completed"
+    elif raw_status == "Done":
+        legacy_default = _normalize_assignee_status(d.get("assignee_status") or "Assigned")
+
+    if isinstance(raw, dict) and raw:
+        return {
+            str(item["code"]): _normalize_assignee_status(raw.get(str(item["code"])) or legacy_default)
+            for item in assignees
+        }
+    return {str(item["code"]): legacy_default for item in assignees}
+
+
+def _internal_it_task_resolved_assignee_statuses(
+    d: dict,
+    assignees: list[dict],
+    *,
+    on_date=None,
+) -> dict[str, str]:
+    stored = _internal_it_task_stored_assignee_statuses(d, assignees)
+    if _internal_it_task_for(d.get("task_for")) != "Daily":
+        return stored
+    day = on_date or _ist_today_date()
+    from_day, to_day = _internal_it_task_daily_dates(d)
+    if (
+        not from_day
+        or not to_day
+        or day < from_day
+        or day > to_day
+        or not _internal_it_task_daily_is_working_day(day)
+    ):
+        return stored
+    day_key = day.isoformat()
+    daily_log = _internal_it_task_daily_log_from_doc(d)
+    resolved: dict[str, str] = {}
+    for item in assignees:
+        code = str(item.get("code") or "")
+        stored_status = stored.get(code, "Assigned")
+        if stored_status in ("Hold", "Delay", "Cancelled"):
+            resolved[code] = stored_status
+            continue
+        resolved[code] = _normalize_assignee_status(
+            (daily_log.get(day_key) or {}).get(code) or "Assigned",
+        )
+    return resolved
+
+
+def _internal_it_task_row_due_fields(d: dict) -> tuple[str, str, str, str]:
+    task_for = _internal_it_task_for(d.get("task_for"))
+    today = _ist_today_date()
+    if task_for == "Daily":
+        from_day, to_day = _internal_it_task_daily_dates(d)
+        from_raw = from_day.isoformat() if from_day else ""
+        to_raw = to_day.isoformat() if to_day else (d.get("due_date") or "").strip()
+        if from_day and to_day:
+            range_label = f"{from_raw} – {to_raw}"
+            if from_day <= today <= to_day:
+                if not _internal_it_task_daily_is_working_day(today):
+                    return to_raw, f"{range_label} (Sunday — off)", "", from_raw
+                effective = today.isoformat()
+                return to_raw, f"{effective} (Daily · Today)", "today", effective
+            if today > to_day:
+                return to_raw, f"{range_label} (Ended)", "overdue", to_raw
+            return to_raw, f"{range_label} (Starts {from_raw})", "", from_raw
+        due = (d.get("due_date") or "").strip()
+        label, state = _internal_it_task_due_date_label(due)
+        return due, label, state, due[:10] if due else ""
+    due = (d.get("due_date") or "").strip()
+    label, state = _internal_it_task_due_date_label(due)
+    effective = due[:10] if due else ""
+    return due, label, state, effective
+
+
 def _internal_it_task_assignees_from_doc(d: dict, options: list[dict] | None = None) -> list[dict]:
     assignees = d.get("assignees") or []
     if isinstance(assignees, list) and assignees:
@@ -2777,22 +2954,7 @@ def _internal_it_task_assignees_from_doc(d: dict, options: list[dict] | None = N
 
 
 def _internal_it_task_assignee_statuses_from_doc(d: dict, assignees: list[dict]) -> dict[str, str]:
-    raw = d.get("assignee_statuses") or {}
-    legacy_default = _normalize_assignee_status(d.get("assignee_status") or "Assigned")
-    raw_status = (d.get("status") or "").strip()
-    if raw_status in INTERNAL_IT_TASK_ASSIGNEE_STATUSES or raw_status == "Progress":
-        legacy_default = _normalize_assignee_status(raw_status)
-    elif raw_status == "Completed":
-        legacy_default = "Completed"
-    elif raw_status == "Done":
-        legacy_default = _normalize_assignee_status(d.get("assignee_status") or "Assigned")
-
-    if isinstance(raw, dict) and raw:
-        return {
-            str(item["code"]): _normalize_assignee_status(raw.get(str(item["code"])) or legacy_default)
-            for item in assignees
-        }
-    return {str(item["code"]): legacy_default for item in assignees}
+    return _internal_it_task_resolved_assignee_statuses(d, assignees)
 
 
 def _internal_it_task_row_assignee_views(
@@ -2837,6 +2999,191 @@ def _user_can_access_it() -> bool:
         return True
     pages = getattr(current_user, "allowed_pages", None) or []
     return "it" in pages
+
+
+PORTAL_NOTIFICATIONS_COLLECTION = "portal_notifications"
+
+
+def _portal_notification_id() -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    return f"PN-{stamp}-{secrets.token_hex(2).upper()}"
+
+
+def _portal_user_display_name(email: str) -> str:
+    normalized = (email or "").strip().lower()
+    if not normalized:
+        return "User"
+    if normalized == IT_MANAGER_EMAIL.lower():
+        return "Manager"
+    for slot, eng_email in enumerate(
+        (IT_ENGINEER_1_EMAIL, IT_ENGINEER_2_EMAIL, IT_ENGINEER_3_EMAIL),
+        start=1,
+    ):
+        if normalized == eng_email.lower():
+            return f"Engineer {slot}"
+    return normalized.split("@", 1)[0].replace(".", " ").title()
+
+
+def _internal_it_task_return_tab_for_email(email: str) -> str:
+    if (email or "").strip().lower() == IT_MANAGER_EMAIL.lower():
+        return "internal-task-assigner"
+    return "internal-tasks"
+
+
+def _internal_it_task_participant_emails(task: dict) -> set[str]:
+    emails: set[str] = {IT_MANAGER_EMAIL.lower()}
+    assignees = _internal_it_task_assignees_from_doc(task)
+    slot_emails = {
+        "1": IT_ENGINEER_1_EMAIL.lower(),
+        "2": IT_ENGINEER_2_EMAIL.lower(),
+        "3": IT_ENGINEER_3_EMAIL.lower(),
+    }
+    for item in assignees:
+        code = str(item.get("code") or "").strip()
+        if code in slot_emails:
+            emails.add(slot_emails[code])
+    return emails
+
+
+def _create_portal_notifications_for_task(
+    task: dict,
+    *,
+    event_type: str,
+    open_modal: str,
+    title: str,
+    message: str,
+    actor_email: str,
+) -> None:
+    db, err = _get_firestore_client()
+    if err or not db:
+        return
+    task_id = (task.get("task_id") or "").strip()
+    if not task_id:
+        return
+    actor = (actor_email or "").strip().lower()
+    now = datetime.now(timezone.utc)
+    recipients = _internal_it_task_participant_emails(task)
+    batch = db.batch()
+    writes = 0
+    for recipient in recipients:
+        if recipient == actor:
+            continue
+        notif_id = _portal_notification_id()
+        ref = db.collection(PORTAL_NOTIFICATIONS_COLLECTION).document(notif_id)
+        batch.set(ref, {
+            "notification_id": notif_id,
+            "user_email": recipient,
+            "task_id": task_id,
+            "event_type": event_type,
+            "open_modal": open_modal,
+            "return_tab": _internal_it_task_return_tab_for_email(recipient),
+            "title": title,
+            "message": message,
+            "created_at": now,
+            "created_by": actor_email or "it_portal",
+            "read_at": None,
+        })
+        writes += 1
+        if writes >= 400:
+            try:
+                batch.commit()
+            except Exception:
+                app.logger.exception("Portal notification batch commit failed task_id=%s", task_id)
+            batch = db.batch()
+            writes = 0
+    if writes:
+        try:
+            batch.commit()
+        except Exception:
+            app.logger.exception("Portal notification batch commit failed task_id=%s", task_id)
+
+
+def _fetch_portal_notifications_for_user(user_email: str, *, limit: int = 30) -> list[dict]:
+    db, err = _get_firestore_client()
+    if err:
+        return []
+    email = (user_email or "").strip().lower()
+    if not email:
+        return []
+    try:
+        snaps = (
+            db.collection(PORTAL_NOTIFICATIONS_COLLECTION)
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(250)
+            .stream()
+        )
+        rows: list[dict] = []
+        for snap in snaps:
+            d = snap.to_dict() or {}
+            if (d.get("user_email") or "").strip().lower() != email:
+                continue
+            created_at = d.get("created_at")
+            rows.append({
+                "notification_id": d.get("notification_id") or snap.id,
+                "task_id": d.get("task_id") or "",
+                "event_type": d.get("event_type") or "comment",
+                "open_modal": d.get("open_modal") or "chat",
+                "return_tab": d.get("return_tab") or "internal-tasks",
+                "title": d.get("title") or "Notification",
+                "message": d.get("message") or "",
+                "created_at": _format_firestore_date_ist(created_at),
+                "created_time": _format_firestore_time_ist_12h(created_at) or "",
+                "is_read": bool(d.get("read_at")),
+            })
+            if len(rows) >= limit:
+                break
+        return rows
+    except Exception:
+        app.logger.exception("Portal notifications fetch failed user=%s", email)
+        return []
+
+
+def _count_unread_portal_notifications(user_email: str) -> int:
+    return sum(1 for item in _fetch_portal_notifications_for_user(user_email, limit=100) if not item.get("is_read"))
+
+
+def _mark_portal_notification_read(notification_id: str, user_email: str) -> tuple[bool, str | None]:
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    rid = (notification_id or "").strip()
+    email = (user_email or "").strip().lower()
+    if not rid or not email:
+        return False, "Missing notification."
+    ref = db.collection(PORTAL_NOTIFICATIONS_COLLECTION).document(rid)
+    snap = ref.get()
+    if not snap.exists:
+        return False, "Notification not found."
+    d = snap.to_dict() or {}
+    if (d.get("user_email") or "").strip().lower() != email:
+        return False, "Not allowed."
+    try:
+        ref.update({"read_at": datetime.now(timezone.utc)})
+    except Exception as e:
+        app.logger.exception("Portal notification mark read failed id=%s", rid)
+        return False, _firestore_user_message(e)
+    return True, None
+
+
+def _internal_it_task_chat_payload(task: dict, *, can_comment: bool) -> dict:
+    actor_email = (getattr(current_user, "email", None) or "").strip().lower()
+    comments = _internal_it_task_comments(task)
+    messages = []
+    for item in comments:
+        author_email = (item.get("created_by") or "").strip().lower()
+        messages.append({
+            "comment": item.get("comment") or "",
+            "created_by": item.get("created_by") or "—",
+            "author_name": _portal_user_display_name(author_email),
+            "created_at": item.get("created_at") or "—",
+            "created_time": item.get("created_time") or "—",
+            "is_mine": bool(actor_email and author_email == actor_email),
+        })
+    return {
+        "task_id": task.get("task_id") or "",
+        "messages": messages,
+        "can_comment": can_comment,
+    }
 
 
 def _it_engineer_wa_for_slot(slot: int) -> str:
@@ -2995,8 +3342,25 @@ def _filter_internal_it_tasks_by_due_period(rows: list[dict], period: str) -> li
         return rows
     return [
         row for row in rows
-        if _internal_it_task_due_period_match(row.get("due_date") or "", normalized)
+        if _internal_it_task_due_period_match(
+            row.get("effective_due_date") or row.get("due_date") or "",
+            normalized,
+        )
     ]
+
+
+def _filter_internal_it_tasks_engineer_visibility(rows: list[dict]) -> list[dict]:
+    visible: list[dict] = []
+    for row in rows:
+        if row.get("task_for") != "Daily":
+            visible.append(row)
+            continue
+        if row.get("is_done") or row.get("is_cancelled"):
+            visible.append(row)
+            continue
+        if row.get("is_daily_active_today"):
+            visible.append(row)
+    return visible
 
 
 def _internal_it_task_upload_documents(task_id: str, files) -> list[dict]:
@@ -3006,11 +3370,7 @@ def _internal_it_task_upload_documents(task_id: str, files) -> list[dict]:
 
     from firebase_admin import storage
 
-    bucket_name = (os.getenv("FIREBASE_STORAGE_BUCKET") or "").strip()
-    if not bucket_name:
-        project = (os.getenv("FIREBASE_PROJECT_ID") or "whatsapp-approval-system").strip()
-        bucket_name = f"{project}.appspot.com"
-    bucket = storage.bucket(bucket_name)
+    bucket = storage.bucket(_firebase_storage_bucket_name())
     now = datetime.now(timezone.utc)
     actor = (getattr(current_user, "email", None) or "it_portal").strip()
 
@@ -3058,11 +3418,7 @@ def _internal_it_task_delete_storage_path(blob_path: str) -> None:
         return
     from firebase_admin import storage
 
-    bucket_name = (os.getenv("FIREBASE_STORAGE_BUCKET") or "").strip()
-    if not bucket_name:
-        project = (os.getenv("FIREBASE_PROJECT_ID") or "whatsapp-approval-system").strip()
-        bucket_name = f"{project}.appspot.com"
-    bucket = storage.bucket(bucket_name)
+    bucket = storage.bucket(_firebase_storage_bucket_name())
     bucket.blob(path).delete()
 
 
@@ -3090,8 +3446,9 @@ def _internal_it_task_row(d: dict, snap_id: str) -> dict:
     docs = d.get("documents") or []
     if not isinstance(docs, list):
         docs = []
-    due_date = (d.get("due_date") or "").strip()
-    due_label, due_state = _internal_it_task_due_date_label(due_date)
+    task_for = _internal_it_task_for(d.get("task_for"))
+    from_day, to_day = _internal_it_task_daily_dates(d)
+    due_date, due_label, due_state, effective_due_date = _internal_it_task_row_due_fields(d)
     manager_status = _normalize_manager_status(d.get("status"))
     task_type = _internal_it_task_type(d.get("task_type"))
     assignees = _internal_it_task_assignees_from_doc(d)
@@ -3107,6 +3464,9 @@ def _internal_it_task_row(d: dict, snap_id: str) -> dict:
     status_history = _internal_it_task_status_history_entries(d)
     user_comments = _internal_it_task_user_comments(d)
     all_comments = _internal_it_task_comments(d)
+    daily_from_raw = from_day.isoformat() if from_day else ""
+    daily_to_raw = to_day.isoformat() if to_day else ""
+    is_daily_active_today = _internal_it_task_daily_active_on_date(d)
     return {
         "request_id": d.get("task_id") or snap_id,
         "task_type": task_type,
@@ -3115,7 +3475,12 @@ def _internal_it_task_row(d: dict, snap_id: str) -> dict:
         "assignee_names": assignee_names,
         "assignees": assignee_views,
         "category": d.get("task_category") or "—",
-        "task_for": _internal_it_task_for(d.get("task_for")),
+        "task_for": task_for,
+        "is_daily": task_for == "Daily",
+        "daily_from_date": daily_from_raw,
+        "daily_to_date": daily_to_raw,
+        "is_daily_active_today": is_daily_active_today,
+        "effective_due_date": effective_due_date,
         "description": d.get("task_description") or "—",
         "due_date": due_date or "—",
         "due_date_label": due_label,
@@ -3144,12 +3509,21 @@ def _internal_it_task_row(d: dict, snap_id: str) -> dict:
         "assignee_statuses": assignee_statuses,
         "can_manager_close": (
             not _internal_it_task_manager_is_terminal(manager_status)
-            and _can_manager_close_task(assignees, assignee_statuses)
+            and _can_manager_close_task(
+                assignees,
+                assignee_statuses,
+                task_for=task_for,
+                daily_from_date=daily_from_raw,
+                daily_to_date=daily_to_raw,
+            )
         ),
         "manager_actions": _internal_it_task_manager_actions(
             assignees,
             assignee_statuses,
             manager_status,
+            task_for=task_for,
+            daily_from_date=daily_from_raw,
+            daily_to_date=daily_to_raw,
         ),
         "status_history": status_history,
         "status_timeline": _internal_it_task_status_timeline(d, assignees),
@@ -3280,6 +3654,8 @@ def _create_internal_it_task() -> tuple[bool, str | None]:
     category = (request.form.get("task_category") or "").strip()
     description = (request.form.get("task_description") or "").strip()
     due_date = (request.form.get("due_date") or "").strip()
+    daily_from_date = (request.form.get("daily_from_date") or "").strip()
+    daily_to_date = (request.form.get("daily_to_date") or "").strip()
     priority = (request.form.get("priority") or "").strip()
     assignee_codes = request.form.getlist("assignee_codes")
     assignee_code = (request.form.get("assignee_code") or "").strip()
@@ -3296,17 +3672,32 @@ def _create_internal_it_task() -> tuple[bool, str | None]:
         return False, "Please select a valid task category."
     if not description:
         return False, "Task description is required."
-    if not due_date:
+    if task_for == "Daily":
+        if not daily_from_date or not daily_to_date:
+            return False, "From and To dates are required for daily tasks."
+        try:
+            from_day = datetime.strptime(daily_from_date, "%Y-%m-%d").date()
+            to_day = datetime.strptime(daily_to_date, "%Y-%m-%d").date()
+        except ValueError:
+            return False, "Invalid daily date range."
+        if from_day > to_day:
+            return False, "From date cannot be after To date."
+        due_date = daily_to_date
+    elif not due_date:
         return False, "Due date is required."
+    else:
+        daily_from_date = ""
+        daily_to_date = ""
     if priority not in INTERNAL_IT_TASK_PRIORITIES:
         return False, "Please select a valid priority."
     if task_for not in INTERNAL_IT_TASK_FOR_OPTIONS:
         return False, "Please select a valid task schedule."
 
-    try:
-        datetime.strptime(due_date, "%Y-%m-%d")
-    except ValueError:
-        return False, "Invalid due date."
+    if task_for != "Daily":
+        try:
+            datetime.strptime(due_date, "%Y-%m-%d")
+        except ValueError:
+            return False, "Invalid due date."
 
     task_id = _internal_it_task_id()
     primary = assignees[0]
@@ -3338,6 +3729,9 @@ def _create_internal_it_task() -> tuple[bool, str | None]:
         "task_category": category,
         "task_description": description,
         "due_date": due_date,
+        "daily_from_date": daily_from_date,
+        "daily_to_date": daily_to_date,
+        "daily_log": {},
         "priority": priority,
         "documents": [],
         "created_at": now,
@@ -3387,6 +3781,7 @@ def _update_internal_it_task_assignee_status(
     new_status = _normalize_assignee_status(status)
     assignees = _internal_it_task_assignees_from_doc(task)
     task_type = _internal_it_task_type(task.get("task_type"))
+    task_for = _internal_it_task_for(task.get("task_for"))
     actor_slot = _current_user_it_engineer_slot(db)
     target_code = str(assignee_code or actor_slot or "").strip()
     if not target_code:
@@ -3400,8 +3795,18 @@ def _update_internal_it_task_assignee_status(
     if not _user_is_it_manager() and actor_slot and target_code != actor_slot:
         return False, "You can only update your own task status."
 
-    assignee_statuses = _internal_it_task_assignee_statuses_from_doc(task, assignees)
-    current_status = assignee_statuses.get(target_code, "Assigned")
+    stored_statuses = _internal_it_task_stored_assignee_statuses(task, assignees)
+    if task_for == "Daily":
+        if not _internal_it_task_daily_active_on_date(task):
+            if _ist_today_date().weekday() == 6:
+                return False, "Daily tasks are not active on Sundays."
+            return False, "This daily task is not active today."
+        today_key = _ist_today_date().isoformat()
+        resolved_statuses = _internal_it_task_resolved_assignee_statuses(task, assignees)
+        current_status = resolved_statuses.get(target_code, "Assigned")
+    else:
+        today_key = ""
+        current_status = stored_statuses.get(target_code, "Assigned")
     if _normalize_assignee_status(current_status) == "Hold":
         return False, "Task is on hold. Wait for your manager to continue the task."
     if _normalize_assignee_status(current_status) == "Delay":
@@ -3428,6 +3833,7 @@ def _update_internal_it_task_assignee_status(
     )
     actor = (getattr(current_user, "email", None) or "it_portal").strip()
     now = datetime.now(timezone.utc)
+    assignee_statuses = dict(stored_statuses)
     assignee_statuses[target_code] = new_status
     history = _internal_it_task_append_status_history(
         task.get("status_history") or [],
@@ -3443,6 +3849,12 @@ def _update_internal_it_task_assignee_status(
         "updated_at": now,
         "updated_by": actor,
     }
+    if task_for == "Daily" and today_key:
+        daily_log = _internal_it_task_daily_log_from_doc(task)
+        day_statuses = dict(daily_log.get(today_key) or {})
+        day_statuses[target_code] = new_status
+        daily_log[today_key] = day_statuses
+        update["daily_log"] = daily_log
     if new_status == "Delay":
         comments = task.get("comments") or []
         if not isinstance(comments, list):
@@ -3460,6 +3872,14 @@ def _update_internal_it_task_assignee_status(
     except Exception as e:
         app.logger.exception("Internal IT task assignee status update failed task_id=%s", task_id)
         return False, _firestore_user_message(e)
+    _create_portal_notifications_for_task(
+        {**task, "task_id": task.get("task_id") or task_id},
+        event_type="status",
+        open_modal="chat",
+        title=f"Status update on {task.get('task_id') or task_id}",
+        message=f"{assignee_name or _portal_user_display_name(actor)} changed status to {new_status}",
+        actor_email=actor,
+    )
     return True, None
 
 
@@ -3483,14 +3903,17 @@ def _update_internal_it_task_due_date(task_id: str, due_date: str) -> tuple[bool
         return False, "Invalid due date."
     actor = (getattr(current_user, "email", None) or "it_portal").strip()
     now = datetime.now(timezone.utc)
+    update_fields: dict = {
+        "due_date": new_due_date,
+        "due_date_updated_at": now,
+        "due_date_updated_by": actor,
+        "updated_at": now,
+        "updated_by": actor,
+    }
+    if _internal_it_task_for(task.get("task_for")) == "Daily":
+        update_fields["daily_to_date"] = new_due_date
     try:
-        ref.update({
-            "due_date": new_due_date,
-            "due_date_updated_at": now,
-            "due_date_updated_by": actor,
-            "updated_at": now,
-            "updated_by": actor,
-        })
+        ref.update(update_fields)
     except Exception as e:
         app.logger.exception("Internal IT task due date update failed task_id=%s", task_id)
         return False, _firestore_user_message(e)
@@ -3521,10 +3944,14 @@ def _internal_it_task_manager_action(
         return False, "This task is no longer open."
     assignees = _internal_it_task_assignees_from_doc(task)
     assignee_statuses = _internal_it_task_assignee_statuses_from_doc(task, assignees)
+    from_day, to_day = _internal_it_task_daily_dates(task)
     allowed_actions = _internal_it_task_manager_actions(
         assignees,
         assignee_statuses,
         task.get("status") or "",
+        task_for=_internal_it_task_for(task.get("task_for")),
+        daily_from_date=from_day.isoformat() if from_day else (task.get("daily_from_date") or ""),
+        daily_to_date=to_day.isoformat() if to_day else (task.get("daily_to_date") or task.get("due_date") or ""),
     )
     if normalized_action not in allowed_actions:
         return False, "This action is not available for the current task status."
@@ -3608,6 +4035,8 @@ def _internal_it_task_manager_action(
             "assignee_statuses": new_statuses,
             "status_history": history,
         })
+        if _internal_it_task_for(task.get("task_for")) == "Daily":
+            updates["daily_to_date"] = new_due_date
         if task_type == "Individual":
             updates["assignee_status"] = assignee_status_legacy
     elif normalized_action == "continue":
@@ -3660,6 +4089,14 @@ def _internal_it_task_manager_action(
             normalized_action,
         )
         return False, _firestore_user_message(e)
+    _create_portal_notifications_for_task(
+        {**task, **updates, "task_id": task.get("task_id") or task_id},
+        event_type="status",
+        open_modal="chat",
+        title=f"Manager update on {task.get('task_id') or task_id}",
+        message=f"Manager {normalized_action.title()}: {text[:120]}",
+        actor_email=actor,
+    )
     return True, None
 
 
@@ -3737,34 +4174,56 @@ def _reopen_internal_it_task(
     return True, None
 
 
-def _add_internal_it_task_comment(task_id: str, comment: str) -> tuple[bool, str | None]:
+def _internal_it_task_can_comment(task: dict, db) -> bool:
+    if not _user_can_work_internal_it_task(task, db):
+        return False
+    if _user_is_it_manager():
+        return True
+    return not _internal_it_task_manager_is_terminal(_normalize_manager_status(task.get("status")))
+
+
+def _add_internal_it_task_comment(task_id: str, comment: str) -> tuple[bool, str | None, dict | None]:
     db, err = _get_firestore_client()
     if err:
-        return False, err
+        return False, err, None
     ref, task, err = _internal_it_task_load(db, task_id)
     if err:
-        return False, err
-    if not _user_can_work_internal_it_task(task, db):
-        return False, "You are not allowed to update this task."
-    if _internal_it_task_manager_is_terminal(_normalize_manager_status(task.get("status"))):
-        return False, "This task is no longer open."
+        return False, err, None
+    if not _internal_it_task_can_comment(task, db):
+        return False, "You are not allowed to comment on this task.", None
     text = (comment or "").strip()
     if not text:
-        return False, "Comment is required."
+        return False, "Comment is required.", None
+    actor = (getattr(current_user, "email", None) or "it_portal").strip()
     comments = task.get("comments") or []
     if not isinstance(comments, list):
         comments = []
     comments.append({
         "comment": text,
         "created_at": datetime.now(timezone.utc),
-        "created_by": (getattr(current_user, "email", None) or "it_portal").strip(),
+        "created_by": actor,
     })
     try:
         ref.update({"comments": comments})
     except Exception as e:
         app.logger.exception("Internal IT task comment failed task_id=%s", task_id)
-        return False, _firestore_user_message(e)
-    return True, None
+        return False, _firestore_user_message(e), None
+    preview = text if len(text) <= 120 else text[:117] + "..."
+    _create_portal_notifications_for_task(
+        task,
+        event_type="comment",
+        open_modal="chat",
+        title=f"New message on {task.get('task_id') or task_id}",
+        message=f"{_portal_user_display_name(actor)}: {preview}",
+        actor_email=actor,
+    )
+    updated_task = dict(task)
+    updated_task["comments"] = comments
+    updated_task["task_id"] = task.get("task_id") or task_id
+    return True, None, _internal_it_task_chat_payload(
+        updated_task,
+        can_comment=_internal_it_task_can_comment(updated_task, db),
+    )
 
 
 def _append_internal_it_task_documents(task_id: str) -> tuple[bool, str | None]:
@@ -3794,11 +4253,23 @@ def _append_internal_it_task_documents(task_id: str) -> tuple[bool, str | None]:
     if not isinstance(docs, list):
         docs = []
     docs.extend(new_docs)
+    actor = (getattr(current_user, "email", None) or "it_portal").strip()
     try:
         ref.update({"documents": docs})
     except Exception as e:
         app.logger.exception("Internal IT task document save failed task_id=%s", task_id)
         return False, _firestore_user_message(e)
+    doc_names = ", ".join((item.get("name") or "Document") for item in new_docs[:3])
+    if len(new_docs) > 3:
+        doc_names += f" +{len(new_docs) - 3} more"
+    _create_portal_notifications_for_task(
+        task,
+        event_type="document",
+        open_modal="documents",
+        title=f"New document on {task.get('task_id') or task_id}",
+        message=f"{_portal_user_display_name(actor)} uploaded {len(new_docs)} file(s): {doc_names}",
+        actor_email=actor,
+    )
     return True, None
 
 
@@ -8679,6 +9150,7 @@ def _render_requests_page(
                         all_tasks,
                         active_it_slot,
                     )
+                    all_tasks = _filter_internal_it_tasks_engineer_visibility(all_tasks)
                     internal_it_task_stats = _internal_it_task_status_stats(
                         all_tasks,
                         view="engineer",
@@ -8880,12 +9352,59 @@ def it_internal_task_reopen():
 def it_internal_task_comment():
     if not _user_can_access_it():
         abort(403)
-    ok, err = _add_internal_it_task_comment(
-        request.form.get("task_id") or "",
-        request.form.get("comment") or "",
+    wants_json = (
+        request.is_json
+        or "application/json" in (request.headers.get("Accept") or "")
+        or (request.headers.get("X-Requested-With") or "") == "XMLHttpRequest"
     )
+    task_id = (request.form.get("task_id") or (request.get_json(silent=True) or {}).get("task_id") or "").strip()
+    comment = (request.form.get("comment") or (request.get_json(silent=True) or {}).get("comment") or "").strip()
+    ok, err, payload = _add_internal_it_task_comment(task_id, comment)
+    if wants_json:
+        if ok:
+            return jsonify({"ok": True, **(payload or {})})
+        return jsonify({"ok": False, "error": err or "Could not add comment."}), 400
     flash("Comment added." if ok else (err or "Could not add comment."), "success" if ok else "danger")
     return _it_internal_task_redirect()
+
+
+@app.route("/it/api/internal-task/<task_id>/chat", methods=["GET"])
+@login_required
+def it_internal_task_chat_api(task_id: str):
+    if not _user_can_access_it():
+        abort(403)
+    db, err = _get_firestore_client()
+    if err:
+        return jsonify({"ok": False, "error": err}), 500
+    _ref, task, load_err = _internal_it_task_load(db, task_id)
+    if load_err:
+        return jsonify({"ok": False, "error": load_err}), 404
+    if not _user_can_work_internal_it_task(task, db):
+        return jsonify({"ok": False, "error": "Not allowed."}), 403
+    payload = _internal_it_task_chat_payload(
+        task,
+        can_comment=_internal_it_task_can_comment(task, db),
+    )
+    return jsonify({"ok": True, **payload})
+
+
+@app.route("/api/notifications", methods=["GET"])
+@login_required
+def portal_notifications_api():
+    email = (getattr(current_user, "email", None) or "").strip()
+    rows = _fetch_portal_notifications_for_user(email, limit=30)
+    unread = sum(1 for item in rows if not item.get("is_read"))
+    return jsonify({"ok": True, "notifications": rows, "unread_count": unread})
+
+
+@app.route("/api/notifications/<notification_id>/read", methods=["POST"])
+@login_required
+def portal_notification_read(notification_id: str):
+    email = (getattr(current_user, "email", None) or "").strip()
+    ok, err = _mark_portal_notification_read(notification_id, email)
+    if not ok:
+        return jsonify({"ok": False, "error": err or "Could not update notification."}), 400
+    return jsonify({"ok": True})
 
 
 @app.route("/it/internal-task/documents", methods=["POST"])

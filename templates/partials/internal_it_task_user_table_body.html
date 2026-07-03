@@ -96,9 +96,7 @@
 						data-bs-target="#internalTaskCommentModal"
 						data-task-id="{{ row.request_id }}"
 						data-return-tab="{{ return_tab }}"
-						data-comments="{{ row.comments_text | e }}"
-						data-read-only="{{ '1' if row.is_done or not row.is_my_task else '0' }}"
-					>Comments{% if row.comments_count %} ({{ row.comments_count }}){% endif %}</button>
+					>Chat{% if row.comments_count %} ({{ row.comments_count }}){% endif %}</button>
 				</li>
 				<li>
 					<button

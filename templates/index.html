@@ -178,96 +178,19 @@
 										<path fill-rule="evenodd"
 											d="M8 1.918l-.797.161A4.002 4.002 0 0 0 4 6c0 .628-.134 2.197-.459 3.742-.16.767-.376 1.566-.663 2.258h10.244c-.287-.692-.502-1.49-.663-2.258C12.134 8.197 12 6.628 12 6a4.002 4.002 0 0 0-3.203-3.92L8 1.917zM14.22 12c.223.447.481.801.78 1H1c.299-.199.557-.553.78-1C2.68 10.2 3 6.88 3 6c0-2.42 1.72-4.44 4.005-4.901a1 1 0 1 1 1.99 0A5.002 5.002 0 0 1 13 6c0 .88.32 4.2 1.22 6z" />
 									</svg>
-									<span class="icon-badge">3</span>
+									<span class="icon-badge d-none" id="portal-notifications-badge">0</span>
 								</a><!--//dropdown-toggle-->
 
 								<div class="dropdown-menu p-0" aria-labelledby="notifications-dropdown-toggle">
 									<div class="dropdown-menu-header p-3">
 										<h5 class="dropdown-menu-title mb-0">Notifications</h5>
 									</div><!--//dropdown-menu-title-->
-									<div class="dropdown-menu-content">
-										<div class="item p-3">
-											<div class="row gx-2 justify-content-between align-items-center">
-												<div class="col-auto">
-													<img class="profile-image"
-														src="{{ url_for('static', filename='assets/images/profiles/profile-1.png') }}"
-														alt="">
-												</div><!--//col-->
-												<div class="col">
-													<div class="info">
-														<div class="desc">Amy shared a file with you. Lorem ipsum dolor
-															sit amet, consectetur adipiscing elit. </div>
-														<div class="meta"> 2 hrs ago</div>
-													</div>
-												</div><!--//col-->
-											</div><!--//row-->
-											<a class="link-mask" href="notifications.html"></a>
-										</div><!--//item-->
-										<div class="item p-3">
-											<div class="row gx-2 justify-content-between align-items-center">
-												<div class="col-auto">
-													<div class="app-icon-holder">
-														<svg width="1em" height="1em" viewBox="0 0 16 16"
-															class="bi bi-receipt" fill="currentColor"
-															xmlns="http://www.w3.org/2000/svg">
-															<path fill-rule="evenodd"
-																d="M1.92.506a.5.5 0 0 1 .434.14L3 1.293l.646-.647a.5.5 0 0 1 .708 0L5 1.293l.646-.647a.5.5 0 0 1 .708 0L7 1.293l.646-.647a.5.5 0 0 1 .708 0L9 1.293l.646-.647a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .708 0l.646.647.646-.647a.5.5 0 0 1 .801.13l.5 1A.5.5 0 0 1 15 2v12a.5.5 0 0 1-.053.224l-.5 1a.5.5 0 0 1-.8.13L13 14.707l-.646.647a.5.5 0 0 1-.708 0L11 14.707l-.646.647a.5.5 0 0 1-.708 0L9 14.707l-.646.647a.5.5 0 0 1-.708 0L7 14.707l-.646.647a.5.5 0 0 1-.708 0L5 14.707l-.646.647a.5.5 0 0 1-.708 0L3 14.707l-.646.647a.5.5 0 0 1-.801-.13l-.5-1A.5.5 0 0 1 1 14V2a.5.5 0 0 1 .053-.224l.5-1a.5.5 0 0 1 .367-.27zm.217 1.338L2 2.118v11.764l.137.274.51-.51a.5.5 0 0 1 .707 0l.646.647.646-.646a.5.5 0 0 1 .708 0l.646.646.646-.646a.5.5 0 0 1 .708 0l.646.646.646-.646a.5.5 0 0 1 .708 0l.646.646.646-.646a.5.5 0 0 1 .708 0l.646.646.646-.646a.5.5 0 0 1 .708 0l.509.509.137-.274V2.118l-.137-.274-.51.51a.5.5 0 0 1-.707 0L12 1.707l-.646.647a.5.5 0 0 1-.708 0L10 1.707l-.646.647a.5.5 0 0 1-.708 0L8 1.707l-.646.647a.5.5 0 0 1-.708 0L6 1.707l-.646.647a.5.5 0 0 1-.708 0L4 1.707l-.646.647a.5.5 0 0 1-.708 0l-.509-.51z" />
-															<path fill-rule="evenodd"
-																d="M3 4.5a.5.5 0 0 1 .5-.5h6a.5.5 0 1 1 0 1h-6a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h6a.5.5 0 1 1 0 1h-6a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h6a.5.5 0 1 1 0 1h-6a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5zm8-6a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5z" />
-														</svg>
-													</div>
-												</div><!--//col-->
-												<div class="col">
-													<div class="info">
-														<div class="desc">You have a new invoice. Proin venenatis
-															interdum est.</div>
-														<div class="meta"> 1 day ago</div>
-													</div>
-												</div><!--//col-->
-											</div><!--//row-->
-											<a class="link-mask" href="notifications.html"></a>
-										</div><!--//item-->
-										<div class="item p-3">
-											<div class="row gx-2 justify-content-between align-items-center">
-												<div class="col-auto">
-													<div class="app-icon-holder icon-holder-mono">
-														<svg width="1em" height="1em" viewBox="0 0 16 16"
-															class="bi bi-bar-chart-line" fill="currentColor"
-															xmlns="http://www.w3.org/2000/svg">
-															<path fill-rule="evenodd"
-																d="M11 2a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v12h.5a.5.5 0 0 1 0 1H.5a.5.5 0 0 1 0-1H1v-3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3h1V7a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v7h1V2zm1 12h2V2h-2v12zm-3 0V7H7v7h2zm-5 0v-3H2v3h2z" />
-														</svg>
-													</div>
-												</div><!--//col-->
-												<div class="col">
-													<div class="info">
-														<div class="desc">Your report is ready. Proin venenatis interdum
-															est.</div>
-														<div class="meta"> 3 days ago</div>
-													</div>
-												</div><!--//col-->
-											</div><!--//row-->
-											<a class="link-mask" href="notifications.html"></a>
-										</div><!--//item-->
-										<div class="item p-3">
-											<div class="row gx-2 justify-content-between align-items-center">
-												<div class="col-auto">
-													<img class="profile-image"
-														src="{{ url_for('static', filename='assets/images/profiles/profile-2.png') }}" alt="">
-												</div><!--//col-->
-												<div class="col">
-													<div class="info">
-														<div class="desc">James sent you a new message.</div>
-														<div class="meta"> 7 days ago</div>
-													</div>
-												</div><!--//col-->
-											</div><!--//row-->
-											<a class="link-mask" href="notifications.html"></a>
-										</div><!--//item-->
+									<div class="dropdown-menu-content" id="portal-notifications-list">
+										<div class="item p-3 text-muted small">Loading...</div>
 									</div><!--//dropdown-menu-content-->
 
-									<div class="dropdown-menu-footer p-2 text-center">
-										<a href="notifications.html">View all</a>
+									<div class="dropdown-menu-footer p-2 text-center d-none" id="portal-notifications-footer">
+										<span class="text-muted small">Internal task updates</span>
 									</div>
 
 								</div><!--//dropdown-menu-->
@@ -1061,6 +984,100 @@
 						if (inner) inner.addEventListener('click', function(e) { e.preventDefault(); var t = document.getElementById('sidepanel-toggler'); if (t) t.click(); });
 					})();
 				</script>
+				{% if current_user.is_authenticated %}
+				<script>
+				(function () {
+					var listEl = document.getElementById("portal-notifications-list");
+					var badgeEl = document.getElementById("portal-notifications-badge");
+					var footerEl = document.getElementById("portal-notifications-footer");
+					var apiUrl = {{ url_for('portal_notifications_api') | tojson }};
+					var readUrlTemplate = {{ url_for('portal_notification_read', notification_id='__ID__') | tojson }};
+					var itBaseUrl = {{ url_for('it') | tojson }};
+					if (!listEl) return;
+					function escapeHtml(value) {
+						return String(value || "")
+							.replace(/&/g, "&amp;")
+							.replace(/</g, "&lt;")
+							.replace(/>/g, "&gt;")
+							.replace(/"/g, "&quot;");
+					}
+					function openNotification(item) {
+						var taskId = (item.task_id || "").trim();
+						var returnTab = (item.return_tab || "internal-tasks").trim();
+						var openModal = (item.open_modal || "chat").trim().toLowerCase();
+						var readUrl = readUrlTemplate.replace("__ID__", encodeURIComponent(item.notification_id || ""));
+						fetch(readUrl, { method: "POST", credentials: "same-origin", headers: { "Accept": "application/json" } }).catch(function () {});
+						var onItPage = window.location.pathname.indexOf("/it") !== -1;
+						if (onItPage) {
+							if (openModal === "documents" && typeof window.openInternalItTaskDocuments === "function") {
+								window.openInternalItTaskDocuments(taskId, returnTab);
+							} else if (typeof window.openInternalItTaskChat === "function") {
+								window.openInternalItTaskChat(taskId, returnTab);
+							}
+							return;
+						}
+						var query = "?tab=" + encodeURIComponent(returnTab) +
+							"&open_task=" + encodeURIComponent(taskId) +
+							"&open_modal=" + encodeURIComponent(openModal);
+						window.location.href = itBaseUrl + query;
+					}
+					function renderNotifications(data) {
+						var items = (data && data.notifications) || [];
+						var unread = (data && data.unread_count) || 0;
+						if (badgeEl) {
+							if (unread > 0) {
+								badgeEl.textContent = String(unread > 99 ? "99+" : unread);
+								badgeEl.classList.remove("d-none");
+							} else {
+								badgeEl.classList.add("d-none");
+							}
+						}
+						if (footerEl) footerEl.classList.toggle("d-none", !items.length);
+						if (!items.length) {
+							listEl.innerHTML = '<div class="item p-3 text-muted small">No notifications yet.</div>';
+							return;
+						}
+						listEl.innerHTML = items.map(function (item) {
+							var unreadClass = item.is_read ? "" : " bg-light";
+							var typeLabel = (item.event_type || "update").toUpperCase();
+							var stamp = escapeHtml(((item.created_at || "") + " " + (item.created_time || "")).trim());
+							return '<button type="button" class="item p-3 border-0 bg-transparent text-start w-100 portal-notification-item' + unreadClass + '"' +
+								' data-notification-id="' + escapeHtml(item.notification_id || "") + '"' +
+								' data-task-id="' + escapeHtml(item.task_id || "") + '"' +
+								' data-return-tab="' + escapeHtml(item.return_tab || "internal-tasks") + '"' +
+								' data-open-modal="' + escapeHtml(item.open_modal || "chat") + '">' +
+								'<div class="fw-semibold small mb-1">' + escapeHtml(item.title || "Notification") + '</div>' +
+								'<div class="desc small mb-1">' + escapeHtml(item.message || "") + '</div>' +
+								'<div class="meta small text-muted">' + typeLabel + (stamp ? (" · " + stamp) : "") + '</div>' +
+								'</button>';
+						}).join("");
+						listEl.querySelectorAll(".portal-notification-item").forEach(function (btn) {
+							btn.addEventListener("click", function () {
+								openNotification({
+									notification_id: btn.getAttribute("data-notification-id") || "",
+									task_id: btn.getAttribute("data-task-id") || "",
+									return_tab: btn.getAttribute("data-return-tab") || "internal-tasks",
+									open_modal: btn.getAttribute("data-open-modal") || "chat"
+								});
+								window.refreshPortalNotifications();
+							});
+						});
+					}
+					window.refreshPortalNotifications = function () {
+						return fetch(apiUrl, { credentials: "same-origin", headers: { "Accept": "application/json" } })
+							.then(function (res) { return res.json(); })
+							.then(function (data) {
+								if (data && data.ok) renderNotifications(data);
+							})
+							.catch(function () {
+								if (listEl) listEl.innerHTML = '<div class="item p-3 text-muted small">Could not load notifications.</div>';
+							});
+					};
+					window.refreshPortalNotifications();
+					setInterval(window.refreshPortalNotifications, 45000);
+				})();
+				</script>
+				{% endif %}
 
 				<!-- Loading overlay: forms + in-app links (showAppLoading defined in body for full-page loads) -->
 				<script>

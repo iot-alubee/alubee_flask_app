@@ -133,6 +133,59 @@
 	.internal-it-milestone-dot-completed { background: #198754; box-shadow: 0 0 0 2px #a3cfbb; }
 	.internal-it-milestone-dot-manager { background: #6610f2; box-shadow: 0 0 0 2px #c29ffa; }
 	.text-bg-delay { background-color: #e67e22 !important; color: #fff; }
+	.internal-it-chat-wrap {
+		display: flex;
+		flex-direction: column;
+		min-height: 320px;
+		max-height: 55vh;
+	}
+	.internal-it-chat-messages {
+		flex: 1 1 auto;
+		overflow-y: auto;
+		padding: 0.75rem;
+		background: #f8f9fa;
+		border: 1px solid #e9ecef;
+		border-radius: 0.5rem;
+	}
+	.internal-it-chat-empty {
+		color: #6c757d;
+		text-align: center;
+		padding: 2rem 1rem;
+		font-size: 0.9rem;
+	}
+	.internal-it-chat-bubble {
+		max-width: 82%;
+		margin-bottom: 0.75rem;
+		padding: 0.55rem 0.75rem;
+		border-radius: 0.85rem;
+		font-size: 0.9rem;
+		line-height: 1.35;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+	.internal-it-chat-bubble.mine {
+		margin-left: auto;
+		background: #0d6efd;
+		color: #fff;
+		border-bottom-right-radius: 0.2rem;
+	}
+	.internal-it-chat-bubble.theirs {
+		margin-right: auto;
+		background: #fff;
+		color: #212529;
+		border: 1px solid #dee2e6;
+		border-bottom-left-radius: 0.2rem;
+	}
+	.internal-it-chat-meta {
+		font-size: 0.72rem;
+		opacity: 0.85;
+		margin-bottom: 0.2rem;
+	}
+	.internal-it-chat-compose {
+		border-top: 1px solid #e9ecef;
+		padding-top: 0.75rem;
+		margin-top: 0.75rem;
+	}
 	.internal-it-stat-cards {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1612,9 +1665,18 @@
 										{% endfor %}
 									</select>
 								</div>
-								<div class="col-md-6">
+								<div class="col-md-6" id="internal-it-due-date-wrap">
 									<label for="internal-it-due-date" class="form-label fw-semibold">Due Date</label>
-									<input id="internal-it-due-date" type="date" name="due_date" class="form-control" required>
+									<input id="internal-it-due-date" type="date" name="due_date" class="form-control">
+								</div>
+								<div class="col-md-6 d-none" id="internal-it-daily-from-wrap">
+									<label for="internal-it-daily-from" class="form-label fw-semibold">From Date</label>
+									<input id="internal-it-daily-from" type="date" name="daily_from_date" class="form-control">
+								</div>
+								<div class="col-md-6 d-none" id="internal-it-daily-to-wrap">
+									<label for="internal-it-daily-to" class="form-label fw-semibold">To Date</label>
+									<input id="internal-it-daily-to" type="date" name="daily_to_date" class="form-control">
+									<div class="form-text">Engineers complete this task each working day (Mon–Sat) through the To date. Sundays are excluded.</div>
 								</div>
 								<div class="col-12">
 									<label for="internal-it-description" class="form-label fw-semibold">Task Description</label>
@@ -1685,33 +1747,38 @@
 			</div>
 		</div>
 
-		<div class="modal fade" id="internalTaskCommentModal" tabindex="-1" aria-labelledby="internalTaskCommentModalLabel" aria-hidden="true">
-			<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+		<div class="modal fade" id="internalTaskCommentModal" tabindex="-1" aria-labelledby="internalTaskCommentModalLabel" aria-hidden="true"
+			data-chat-url="{{ url_for('it_internal_task_chat_api', task_id='__TASK_ID__') }}"
+			data-comment-url="{{ url_for('it_internal_task_comment') }}">
+			<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
 				<div class="modal-content">
-					<form method="post" action="{{ url_for('it_internal_task_comment') }}" id="internal-task-comment-form">
-						<div class="modal-header">
-							<h5 class="modal-title" id="internalTaskCommentModalLabel">Comments</h5>
-							<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-						</div>
-						<div class="modal-body">
-							<input type="hidden" name="task_id" id="internal-task-comment-id" value="">
-							<input type="hidden" name="return_tab" id="internal-task-comment-return-tab" value="internal-task-assigner">
-							<input type="hidden" name="filter_assignee_code" id="internal-task-comment-filter-assignee" value="{{ internal_it_task_filters.assignee_code }}">
-							<input type="hidden" name="filter_due_period" id="internal-task-comment-filter-due-period" value="{{ internal_it_task_filters.due_period }}">
-							<input type="hidden" name="filter_task_status" id="internal-task-comment-filter-status" value="{{ internal_it_task_filters.status_filter }}">
-							<div class="small text-muted mb-2" id="internal-task-comment-task-id">Task</div>
-							<div class="small text-muted mb-2">All comments</div>
-							<div id="internal-task-comment-history" class="border rounded p-2 mb-3 bg-light" style="white-space: pre-wrap; min-height: 80px;">No comments yet.</div>
-							<div id="internal-task-comment-add-wrap">
-								<label for="internal-task-comment-input" class="form-label fw-semibold">Add Comment</label>
-								<textarea id="internal-task-comment-input" name="comment" class="form-control" rows="4"></textarea>
+					<div class="modal-header">
+						<h5 class="modal-title" id="internalTaskCommentModalLabel">Task Chat</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body d-flex flex-column">
+						<div class="small text-muted mb-2" id="internal-task-comment-task-id">Task</div>
+						<input type="hidden" id="internal-task-comment-id" value="">
+						<input type="hidden" id="internal-task-comment-return-tab" value="internal-task-assigner">
+						<input type="hidden" id="internal-task-comment-filter-assignee" value="{{ internal_it_task_filters.assignee_code }}">
+						<input type="hidden" id="internal-task-comment-filter-due-period" value="{{ internal_it_task_filters.due_period }}">
+						<input type="hidden" id="internal-task-comment-filter-status" value="{{ internal_it_task_filters.status_filter }}">
+						<div class="internal-it-chat-wrap">
+							<div id="internal-task-comment-history" class="internal-it-chat-messages">
+								<div class="internal-it-chat-empty">Loading chat...</div>
+							</div>
+							<div id="internal-task-comment-add-wrap" class="internal-it-chat-compose">
+								<form id="internal-task-comment-form">
+									<label for="internal-task-comment-input" class="form-label fw-semibold mb-1">Message</label>
+									<textarea id="internal-task-comment-input" name="comment" class="form-control mb-2" rows="2" placeholder="Type a message..."></textarea>
+									<div class="d-flex justify-content-end gap-2">
+										<button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+										<button type="submit" class="btn btn-primary btn-sm" id="internal-task-comment-submit">Send</button>
+									</div>
+								</form>
 							</div>
 						</div>
-						<div class="modal-footer">
-							<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
-							<button type="submit" class="btn btn-primary" id="internal-task-comment-submit">Save Comment</button>
-						</div>
-					</form>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -1819,24 +1886,6 @@
 							<button type="submit" class="btn btn-primary">Save Due Date</button>
 						</div>
 					</form>
-				</div>
-			</div>
-		</div>
-
-		<div class="modal fade" id="internalTaskUserCommentsModal" tabindex="-1" aria-labelledby="internalTaskUserCommentsModalLabel" aria-hidden="true">
-			<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
-				<div class="modal-content">
-					<div class="modal-header">
-						<h5 class="modal-title" id="internalTaskUserCommentsModalLabel">User Comments</h5>
-						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-					</div>
-					<div class="modal-body">
-						<div class="small text-muted mb-2" id="internal-task-user-comments-id">Task</div>
-						<div id="internal-task-user-comments-body" class="border rounded p-2 bg-light" style="white-space: pre-wrap; min-height: 80px;">No user comments yet.</div>
-					</div>
-					<div class="modal-footer">
-						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
-					</div>
 				</div>
 			</div>
 		</div>
@@ -2241,34 +2290,141 @@
 	var internalTaskCommentInput = document.getElementById("internal-task-comment-input");
 	var internalTaskCommentAddWrap = document.getElementById("internal-task-comment-add-wrap");
 	var internalTaskCommentSubmit = document.getElementById("internal-task-comment-submit");
+	var internalTaskChatModal = internalTaskCommentModalEl && typeof bootstrap !== "undefined"
+		? bootstrap.Modal.getOrCreateInstance(internalTaskCommentModalEl)
+		: null;
+	function escapeChatHtml(value) {
+		return String(value || "")
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+			.replace(/"/g, "&quot;");
+	}
+	function renderInternalItTaskChatMessages(messages) {
+		if (!internalTaskCommentHistory) return;
+		if (!messages || !messages.length) {
+			internalTaskCommentHistory.innerHTML = '<div class="internal-it-chat-empty">No messages yet. Start the conversation.</div>';
+			return;
+		}
+		internalTaskCommentHistory.innerHTML = messages.map(function (msg) {
+			var mine = msg && msg.is_mine;
+			var author = escapeChatHtml((msg && msg.author_name) || (msg && msg.created_by) || "User");
+			var stamp = escapeChatHtml(((msg && msg.created_at) || "—") + " " + ((msg && msg.created_time) || "")).trim();
+			var text = escapeChatHtml((msg && msg.comment) || "");
+			return '<div class="internal-it-chat-bubble ' + (mine ? "mine" : "theirs") + '">' +
+				'<div class="internal-it-chat-meta">' + author + " · " + stamp + '</div>' +
+				text +
+				'</div>';
+		}).join("");
+		internalTaskCommentHistory.scrollTop = internalTaskCommentHistory.scrollHeight;
+	}
+	function internalItTaskChatUrl(taskId) {
+		var template = internalTaskCommentModalEl ? (internalTaskCommentModalEl.getAttribute("data-chat-url") || "") : "";
+		return template.replace("__TASK_ID__", encodeURIComponent(taskId || ""));
+	}
+	function loadInternalItTaskChat(taskId, returnTab) {
+		if (!taskId) return Promise.resolve();
+		if (internalTaskCommentId) internalTaskCommentId.value = taskId;
+		if (internalTaskCommentTaskId) internalTaskCommentTaskId.textContent = "Task " + taskId;
+		if (internalTaskCommentReturnTab && returnTab) internalTaskCommentReturnTab.value = returnTab;
+		if (internalTaskCommentHistory) {
+			internalTaskCommentHistory.innerHTML = '<div class="internal-it-chat-empty">Loading chat...</div>';
+		}
+		return fetch(internalItTaskChatUrl(taskId), {
+			headers: { "Accept": "application/json" },
+			credentials: "same-origin"
+		})
+			.then(function (res) { return res.json(); })
+			.then(function (data) {
+				if (!data || !data.ok) {
+					if (internalTaskCommentHistory) {
+						internalTaskCommentHistory.innerHTML = '<div class="internal-it-chat-empty text-danger">' + escapeChatHtml((data && data.error) || "Could not load chat.") + '</div>';
+					}
+					return;
+				}
+				renderInternalItTaskChatMessages(data.messages || []);
+				var canComment = !!data.can_comment;
+				if (internalTaskCommentAddWrap) internalTaskCommentAddWrap.classList.toggle("d-none", !canComment);
+				if (internalTaskCommentInput) internalTaskCommentInput.disabled = !canComment;
+				if (internalTaskCommentSubmit) internalTaskCommentSubmit.disabled = !canComment;
+			})
+			.catch(function () {
+				if (internalTaskCommentHistory) {
+					internalTaskCommentHistory.innerHTML = '<div class="internal-it-chat-empty text-danger">Could not load chat.</div>';
+				}
+			});
+	}
+	window.openInternalItTaskChat = function (taskId, returnTab) {
+		if (!internalTaskChatModal || !taskId) return;
+		loadInternalItTaskChat(taskId, returnTab || "internal-tasks").then(function () {
+			internalTaskChatModal.show();
+		});
+	};
+	window.openInternalItTaskDocuments = function (taskId, returnTab) {
+		var docsModalEl = document.getElementById("internalTaskDocumentsModal");
+		if (!docsModalEl || !taskId || typeof bootstrap === "undefined") return;
+		var btn = document.querySelector('[data-task-id="' + taskId + '"].internal-task-documents-btn');
+		if (btn) {
+			btn.click();
+			return;
+		}
+		var uploadId = document.getElementById("internal-task-documents-upload-id");
+		var taskLabel = document.getElementById("internal-task-documents-task-id");
+		var returnTabEl = document.getElementById("internal-task-documents-return-tab");
+		if (uploadId) uploadId.value = taskId;
+		if (taskLabel) taskLabel.textContent = "Task " + taskId;
+		if (returnTabEl && returnTab) returnTabEl.value = returnTab;
+		bootstrap.Modal.getOrCreateInstance(docsModalEl).show();
+	};
 	if (internalTaskCommentModalEl) {
 		internalTaskCommentModalEl.addEventListener("show.bs.modal", function (event) {
 			var trigger = event.relatedTarget;
 			if (!trigger) return;
 			var taskId = (trigger.getAttribute("data-task-id") || "").trim();
-			var readOnly = (trigger.getAttribute("data-read-only") || "") === "1";
-			if (internalTaskCommentId) {
-				internalTaskCommentId.value = taskId;
+			var returnTab = (trigger.getAttribute("data-return-tab") || "internal-task-assigner").trim();
+			loadInternalItTaskChat(taskId, returnTab);
+		});
+	}
+	if (internalTaskCommentForm) {
+		internalTaskCommentForm.addEventListener("submit", function (event) {
+			event.preventDefault();
+			if (internalTaskCommentAddWrap && internalTaskCommentAddWrap.classList.contains("d-none")) return;
+			var taskId = internalTaskCommentId ? internalTaskCommentId.value.trim() : "";
+			var text = internalTaskCommentInput ? internalTaskCommentInput.value.trim() : "";
+			if (!taskId || !text) {
+				window.alert("Please enter a message.");
+				return;
 			}
-			if (internalTaskCommentTaskId) {
-				internalTaskCommentTaskId.textContent = taskId ? ("Task " + taskId) : "Task";
-			}
-			if (internalTaskCommentReturnTab) {
-				internalTaskCommentReturnTab.value = (trigger.getAttribute("data-return-tab") || "internal-task-assigner").trim();
-			}
-			if (internalTaskCommentHistory) {
-				internalTaskCommentHistory.textContent = (trigger.getAttribute("data-comments") || "").trim() || "No comments yet.";
-			}
-			if (internalTaskCommentInput) {
-				internalTaskCommentInput.value = "";
-				internalTaskCommentInput.required = !readOnly;
-			}
-			if (internalTaskCommentAddWrap) {
-				internalTaskCommentAddWrap.classList.toggle("d-none", readOnly);
-			}
-			if (internalTaskCommentSubmit) {
-				internalTaskCommentSubmit.classList.toggle("d-none", readOnly);
-			}
+			var commentUrl = internalTaskCommentModalEl ? (internalTaskCommentModalEl.getAttribute("data-comment-url") || "") : "";
+			if (internalTaskCommentSubmit) internalTaskCommentSubmit.disabled = true;
+			fetch(commentUrl, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"Accept": "application/json",
+					"X-Requested-With": "XMLHttpRequest"
+				},
+				credentials: "same-origin",
+				body: JSON.stringify({ task_id: taskId, comment: text })
+			})
+				.then(function (res) { return res.json(); })
+				.then(function (data) {
+					if (!data || !data.ok) {
+						window.alert((data && data.error) || "Could not send message.");
+						return;
+					}
+					if (internalTaskCommentInput) internalTaskCommentInput.value = "";
+					renderInternalItTaskChatMessages(data.messages || []);
+					if (typeof window.refreshPortalNotifications === "function") {
+						window.refreshPortalNotifications();
+					}
+				})
+				.catch(function () {
+					window.alert("Could not send message.");
+				})
+				.finally(function () {
+					if (internalTaskCommentSubmit) internalTaskCommentSubmit.disabled = false;
+				});
 		});
 	}
 	var internalTaskDocumentsModalEl = document.getElementById("internalTaskDocumentsModal");
@@ -2362,18 +2518,6 @@
 			});
 		}
 	}
-	if (internalTaskCommentForm) {
-		internalTaskCommentForm.addEventListener("submit", function (event) {
-			if (internalTaskCommentAddWrap && internalTaskCommentAddWrap.classList.contains("d-none")) {
-				event.preventDefault();
-				return;
-			}
-			if (internalTaskCommentInput && !(internalTaskCommentInput.value || "").trim()) {
-				event.preventDefault();
-				window.alert("Please enter a comment.");
-			}
-		});
-	}
 	if (typeof bootstrap !== "undefined") {
 		document.querySelectorAll(".internal-it-task-actions-dropdown [data-bs-toggle='dropdown']").forEach(function (toggle) {
 			bootstrap.Dropdown.getOrCreateInstance(toggle, {
@@ -2410,21 +2554,6 @@
 			}
 			if (internalTaskReopenDescription) {
 				internalTaskReopenDescription.value = (trigger.getAttribute("data-description") || "").trim();
-			}
-		});
-	}
-	var internalTaskUserCommentsModalEl = document.getElementById("internalTaskUserCommentsModal");
-	var internalTaskUserCommentsId = document.getElementById("internal-task-user-comments-id");
-	var internalTaskUserCommentsBody = document.getElementById("internal-task-user-comments-body");
-	if (internalTaskUserCommentsModalEl) {
-		internalTaskUserCommentsModalEl.addEventListener("show.bs.modal", function (event) {
-			var trigger = event.relatedTarget;
-			if (!trigger) return;
-			if (internalTaskUserCommentsId) {
-				internalTaskUserCommentsId.textContent = (trigger.getAttribute("data-task-id") || "Task").trim();
-			}
-			if (internalTaskUserCommentsBody) {
-				internalTaskUserCommentsBody.textContent = (trigger.getAttribute("data-comments") || "").trim() || "No user comments yet.";
 			}
 		});
 	}
@@ -2475,6 +2604,42 @@
 		radio.addEventListener("change", syncInternalItTaskAssigneeFields);
 	});
 	syncInternalItTaskAssigneeFields();
+	var internalItTaskFor = document.getElementById("internal-it-task-for");
+	var internalItDueDateWrap = document.getElementById("internal-it-due-date-wrap");
+	var internalItDueDateInput = document.getElementById("internal-it-due-date");
+	var internalItDailyFromWrap = document.getElementById("internal-it-daily-from-wrap");
+	var internalItDailyToWrap = document.getElementById("internal-it-daily-to-wrap");
+	var internalItDailyFrom = document.getElementById("internal-it-daily-from");
+	var internalItDailyTo = document.getElementById("internal-it-daily-to");
+	function syncInternalItTaskDateFields() {
+		var schedule = internalItTaskFor ? internalItTaskFor.value : "One time";
+		var isDaily = schedule === "Daily";
+		if (internalItDueDateWrap) {
+			internalItDueDateWrap.classList.toggle("d-none", isDaily);
+		}
+		if (internalItDailyFromWrap) {
+			internalItDailyFromWrap.classList.toggle("d-none", !isDaily);
+		}
+		if (internalItDailyToWrap) {
+			internalItDailyToWrap.classList.toggle("d-none", !isDaily);
+		}
+		if (internalItDueDateInput) {
+			internalItDueDateInput.required = !isDaily;
+			if (isDaily) internalItDueDateInput.value = "";
+		}
+		if (internalItDailyFrom) {
+			internalItDailyFrom.required = isDaily;
+			if (!isDaily) internalItDailyFrom.value = "";
+		}
+		if (internalItDailyTo) {
+			internalItDailyTo.required = isDaily;
+			if (!isDaily) internalItDailyTo.value = "";
+		}
+	}
+	if (internalItTaskFor) {
+		internalItTaskFor.addEventListener("change", syncInternalItTaskDateFields);
+	}
+	syncInternalItTaskDateFields();
 	var vehicleTodayBtn = document.getElementById("security-vehicle-refresh-today");
 	if (vehicleTodayBtn) {
 		vehicleTodayBtn.addEventListener("click", function () {
@@ -3350,6 +3515,20 @@
 		});
 	});
 {% endif %}
+	(function handleInternalTaskDeepLink() {
+		var params = new URLSearchParams(window.location.search);
+		var taskId = (params.get("open_chat") || params.get("open_task") || "").trim();
+		if (!taskId) return;
+		var openModal = (params.get("open_modal") || "chat").trim().toLowerCase();
+		var returnTab = (params.get("tab") || "internal-tasks").trim();
+		setTimeout(function () {
+			if (openModal === "documents" && typeof window.openInternalItTaskDocuments === "function") {
+				window.openInternalItTaskDocuments(taskId, returnTab);
+			} else if (typeof window.openInternalItTaskChat === "function") {
+				window.openInternalItTaskChat(taskId, returnTab);
+			}
+		}, 350);
+	})();
 })();
 
 </script>

@@ -90,12 +90,12 @@
 				<li>
 					<button
 						type="button"
-						class="dropdown-item internal-task-user-comment-btn"
+						class="dropdown-item internal-task-comment-btn"
 						data-bs-toggle="modal"
-						data-bs-target="#internalTaskUserCommentsModal"
+						data-bs-target="#internalTaskCommentModal"
 						data-task-id="{{ row.request_id }}"
-						data-comments="{{ row.user_comments_text | e }}"
-					>User Comments{% if row.user_comments_count %} ({{ row.user_comments_count }}){% endif %}</button>
+						data-return-tab="{{ return_tab }}"
+					>Chat{% if row.comments_count %} ({{ row.comments_count }}){% endif %}</button>
 				</li>
 				<li>
 					<button

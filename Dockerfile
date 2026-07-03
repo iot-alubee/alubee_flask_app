@@ -13,6 +13,7 @@ COPY . .
 # Cloud Run sets PORT (default 8080)
 ENV PORT=8080
 ENV FIREBASE_PROJECT_ID=whatsapp-approval-system
+ENV FIREBASE_STORAGE_BUCKET=whatsapp-approval-system.firebasestorage.app
 EXPOSE 8080
 
 # Run with gunicorn for production. Build must be from production folder so main.py and auth.py are in /app.
