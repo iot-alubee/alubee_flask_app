@@ -212,6 +212,41 @@ def _sentence_case_word(word: str) -> str:
     return word[:1].upper() + word[1:].lower()
 
 
+def send_guest_visit_otp(
+    phone: str,
+    *,
+    guest_name: str,
+    otp: str,
+    organization: str = "",
+) -> bool:
+    """WhatsApp Authentication template with OTP for visitor guests."""
+    template_name = (os.getenv("VISITOR_OTP_TEMPLATE_NAME") or "visitor_pass_code").strip()
+    if not template_name:
+        logger.warning("VISITOR_OTP_TEMPLATE_NAME not set — skip guest OTP")
+        return False
+    phone10 = _phone_to_10(phone)
+    if not phone10:
+        return False
+    if not ensure_customer(phone10, name=(guest_name or "Guest")[:50]):
+        return False
+    otp_code = str(otp or "").strip()[:15]
+    if not otp_code:
+        return False
+    lang = (os.getenv("VISITOR_OTP_TEMPLATE_LANGUAGE_CODE") or "en").strip()
+    try:
+        send_template(
+            phone10,
+            template_name,
+            language_code=lang,
+            body_values=[otp_code],
+            contact_name=(guest_name or "Guest")[:50],
+        )
+        return True
+    except Exception:
+        logger.exception("guest visit OTP template failed phone=%s", phone10)
+        return False
+
+
 def sentence_case_name(value: str) -> str:
     raw = (value or "").strip()
     if not raw:
