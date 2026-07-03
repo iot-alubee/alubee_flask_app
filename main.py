@@ -1,5 +1,6 @@
 import csv
 import io
+import mimetypes
 
 from flask import Flask, render_template, redirect, url_for, request, flash, abort, jsonify, Response
 from flask_login import (
@@ -78,6 +79,10 @@ SECURITY_UNIT_I_EMAIL = "security.1@alubee.com"
 SECURITY_UNIT_II_EMAIL = "security.2@alubee.com"
 HR_SECURITY_EMAIL = "hr@alubee.com"
 IT_EMAIL = "it@alubee.com"
+IT_MANAGER_EMAIL = "admin@alubee.com"
+IT_ENGINEER_1_EMAIL = "it.1@alubee.com"
+IT_ENGINEER_2_EMAIL = "it.2@alubee.com"
+IT_ENGINEER_3_EMAIL = "it.3@alubee.com"
 PPC_EMAIL_1 = "ppc.1@alubee.com"
 PPC_EMAIL_2 = "ppc.2@alubee.com"
 
@@ -85,12 +90,15 @@ _PPC_UNIT_I_PAGES = ("production", "logistics", "maintenance")
 _PPC_UNIT_II_PAGES = ("production", "maintenance")
 
 # Built-in accounts (SQLite). Change passwords after deploy in production.
-_DEFAULT_ADMIN = ("admin@alubee.com", "admin123")
+_DEFAULT_ADMIN = ("admin@alubee.com", "jeevaMuthu14#")
 _DEFAULT_BUILTIN_VIEWERS = (
     (SECURITY_UNIT_I_EMAIL, "security@alubee", ("security",)),
     (SECURITY_UNIT_II_EMAIL, "security@alubee", ("security",)),
     (HR_SECURITY_EMAIL, "hr@alubee", ("hr",)),
     (IT_EMAIL, "it@alubee", ("it",)),
+    (IT_ENGINEER_1_EMAIL, "it.1@alubee", ("it",)),
+    (IT_ENGINEER_2_EMAIL, "it.2@alubee", ("it",)),
+    (IT_ENGINEER_3_EMAIL, "it.3@alubee", ("it",)),
     (PPC_EMAIL_1, "ppc.1@alubee", _PPC_UNIT_I_PAGES),
     (PPC_EMAIL_2, "ppc.2@alubee", _PPC_UNIT_II_PAGES),
 )
@@ -107,6 +115,9 @@ _BUILTIN_EMAIL_LANDING_PAGES = {
     SECURITY_UNIT_II_EMAIL: "security",
     HR_SECURITY_EMAIL: "hr",
     IT_EMAIL: "it",
+    IT_ENGINEER_1_EMAIL: "it",
+    IT_ENGINEER_2_EMAIL: "it",
+    IT_ENGINEER_3_EMAIL: "it",
     PPC_EMAIL_1: "logistics",
     PPC_EMAIL_2: "maintenance",
 }
@@ -786,6 +797,8 @@ def _login_landing_url(user: User) -> str:
 
     if role == "viewer":
         email = (user.email or "").strip().lower()
+        if email in _IT_ENGINEER_BUILTIN_EMAILS:
+            return url_for("it", tab="it-tickets")
         builtin_page = _BUILTIN_EMAIL_LANDING_PAGES.get(email)
         if builtin_page:
             return _landing_url_for_page(builtin_page)
@@ -1354,6 +1367,41 @@ def _format_approval_label(status: str) -> str:
     return (status or "").strip() or "Pending"
 
 
+def _portal_jmd_approve_pending(d: dict) -> bool:
+    if d.get("visitor_dual_jmd"):
+        i = (d.get("jmd_i_status") or "PENDING").strip().upper()
+        ii = (d.get("jmd_ii_status") or "PENDING").strip().upper()
+        if "DENIED" in (i, ii):
+            return False
+        return not (
+            i in ("APPROVED", "AUTO_APPROVE") and ii in ("APPROVED", "AUTO_APPROVE")
+        )
+    jmd = (d.get("jmd_status") or "").strip().upper()
+    return jmd in ("PENDING", "AWAITING_MANAGER", "AWAITING_JMD")
+
+
+def _portal_md_approve_pending(d: dict) -> bool:
+    if _md_offline_bypass_on_request(d):
+        return False
+    md = (d.get("md_status") or "").strip().upper()
+    if md != "PENDING":
+        return False
+    if d.get("visitor_dual_jmd"):
+        i = (d.get("jmd_i_status") or "").strip().upper()
+        ii = (d.get("jmd_ii_status") or "").strip().upper()
+        return i in ("APPROVED", "AUTO_APPROVE") and ii in ("APPROVED", "AUTO_APPROVE")
+    if not _jmd_approved_for_od(d) and not d.get("jmd_offline_bypass"):
+        return False
+    return True
+
+
+def _portal_admin_approve_flags(d: dict) -> dict:
+    return {
+        "can_admin_jmd_approve": _portal_jmd_approve_pending(d),
+        "can_admin_md_approve": _portal_md_approve_pending(d),
+    }
+
+
 def _aggregate_dual_jmd_status(d: dict) -> str:
     """Single JMD label for Both-units requests (both JMDs must approve)."""
     i = (d.get("jmd_i_status") or "PENDING").strip().upper()
@@ -1568,6 +1616,7 @@ def _fetch_security_od_requests_inner(
                 "md_status": md_display,
                 "jmd_route": _request_jmd_route(d),
                 "fully_approved": fully_ok,
+                **_portal_admin_approve_flags(d),
                 "security_out_at": _format_firestore_time_ist_12h(
                     d.get("security_out_at")
                 ),
@@ -1881,6 +1930,7 @@ def _fetch_security_visitor_requests_inner(
                 "jmd_route": _request_jmd_route(d),
                 "fully_approved": fully_ok,
                 "has_visitor_otp": bool(_normalize_visitor_otp(d.get("visitor_otp"))),
+                **_portal_admin_approve_flags(d),
                 "security_in_at": _format_firestore_time_ist_12h(in_raw),
                 "security_out_at": _format_firestore_time_ist_12h(out_raw),
                 "gate_per_unit": _visitor_uses_per_unit_gate(d),
@@ -2023,6 +2073,7 @@ def _fetch_security_leave_requests_inner(
                 "leave_days": leave_days_display,
                 "jmd_status": jmd_display,
                 "md_status": md_display,
+                **_portal_admin_approve_flags(d),
             }
         )
     return rows
@@ -2083,6 +2134,700 @@ IT_ENGINEER_PHONES: tuple[str, ...] = (
     "9498061569",
 )
 
+_IT_ENGINEER_BUILTIN_EMAILS: frozenset[str] = frozenset({
+    IT_ENGINEER_1_EMAIL.lower(),
+    IT_ENGINEER_2_EMAIL.lower(),
+    IT_ENGINEER_3_EMAIL.lower(),
+})
+
+INTERNAL_IT_TASK_CATEGORIES: tuple[str, ...] = (
+    "Computer/Laptop/Printer",
+    "Software Related",
+    "IoT",
+    "Data Collection",
+    "KT from Other team",
+    "KT to Team",
+    "Data Preparation",
+)
+
+INTERNAL_IT_TASK_PRIORITIES: tuple[str, ...] = (
+    "Low",
+    "Medium",
+    "High",
+    "Critical",
+)
+
+INTERNAL_IT_TASK_TYPES: tuple[str, ...] = (
+    "Individual",
+    "Joined",
+)
+
+INTERNAL_IT_TASK_FOR_OPTIONS: tuple[str, ...] = (
+    "Daily",
+    "One time",
+)
+
+INTERNAL_IT_TASK_ASSIGNEE_STATUSES: tuple[str, ...] = (
+    "Assigned",
+    "In Progress",
+    "Hold",
+    "Delay",
+    "Completed",
+    "Cancelled",
+)
+
+INTERNAL_IT_TASK_ASSIGNEE_STATUS_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    "Assigned": ("In Progress",),
+    "In Progress": ("Completed", "Delay"),
+    "Hold": (),
+    "Delay": (),
+    "Completed": (),
+    "Cancelled": (),
+}
+
+INTERNAL_IT_TASK_MANAGER_STATUS_DONE = "Done"
+INTERNAL_IT_TASK_MANAGER_STATUS_OPEN = "Open"
+INTERNAL_IT_TASK_MANAGER_STATUS_CANCELLED = "Cancelled"
+
+
+def _user_is_it_manager() -> bool:
+    if not current_user.is_authenticated:
+        return False
+    email = (getattr(current_user, "email", None) or "").strip().lower()
+    return email == IT_MANAGER_EMAIL.lower()
+
+
+def _current_user_it_engineer_slot(db) -> str:
+    email = (getattr(current_user, "email", None) or "").strip().lower()
+    if not email:
+        return ""
+    for slot, eng_email in enumerate(
+        (IT_ENGINEER_1_EMAIL, IT_ENGINEER_2_EMAIL, IT_ENGINEER_3_EMAIL),
+        start=1,
+    ):
+        if email == eng_email.lower():
+            return str(slot)
+    for opt in _it_engineer_options(db):
+        wa = (opt.get("wa_id") or "").strip()
+        if not wa:
+            continue
+        try:
+            snap = db.collection("users").document(wa).get()
+            if not snap.exists:
+                continue
+            user_email = ((snap.to_dict() or {}).get("email") or "").strip().lower()
+            if user_email and user_email == email:
+                return str(opt.get("code") or "")
+        except Exception:
+            app.logger.exception("IT engineer slot lookup failed wa=%s", wa)
+    return ""
+
+
+def _resolve_active_it_engineer_slot(db, filter_assignee_code: str = "") -> str:
+    """Engineer identity for Internal Tasks: login mapping, then toolbar selection."""
+    if _user_is_it_manager():
+        return ""
+    slot = _current_user_it_engineer_slot(db)
+    if slot:
+        return slot
+    chosen = str(filter_assignee_code or "").strip()
+    if not chosen:
+        return ""
+    for opt in _it_engineer_options(db):
+        if str(opt.get("code") or "") == chosen:
+            return chosen
+    return ""
+
+
+def _it_engineer_slot_locked(db) -> bool:
+    return bool(_current_user_it_engineer_slot(db))
+
+
+def _enrich_internal_it_task_rows_for_slot(rows: list[dict], active_slot: str) -> list[dict]:
+    slot = str(active_slot or "").strip()
+    for row in rows:
+        my_status = ""
+        my_next: list[str] = []
+        is_mine = False
+        if slot:
+            for assignee in row.get("assignees") or []:
+                if str(assignee.get("code") or "") == slot:
+                    my_status = assignee.get("status") or "Assigned"
+                    my_next = list(assignee.get("next_statuses") or [])
+                    is_mine = True
+                    break
+        row["my_status"] = my_status or "—"
+        row["my_next_statuses"] = my_next
+        row["is_my_task"] = is_mine
+    return rows
+
+
+def _normalize_assignee_status(status: str) -> str:
+    normalized = (status or "").strip() or "Assigned"
+    if normalized == "Progress":
+        normalized = "In Progress"
+    if normalized not in INTERNAL_IT_TASK_ASSIGNEE_STATUSES:
+        normalized = "Assigned"
+    return normalized
+
+
+def _internal_it_task_next_statuses(current_status: str) -> list[str]:
+    current = _normalize_assignee_status(current_status)
+    return list(INTERNAL_IT_TASK_ASSIGNEE_STATUS_TRANSITIONS.get(current, ()))
+
+
+def _internal_it_task_status_allowed(current_status: str, new_status: str) -> bool:
+    return _normalize_assignee_status(new_status) in _internal_it_task_next_statuses(current_status)
+
+
+def _internal_it_task_all_assignees_completed(
+    assignees: list[dict],
+    assignee_statuses: dict[str, str],
+) -> bool:
+    if not assignees:
+        return False
+    for item in assignees:
+        code = str(item.get("code") or "")
+        if _normalize_assignee_status(assignee_statuses.get(code, "Assigned")) != "Completed":
+            return False
+    return True
+
+
+def _internal_it_task_any_assignee_on_hold(
+    assignees: list[dict],
+    assignee_statuses: dict[str, str],
+) -> bool:
+    for item in assignees:
+        code = str(item.get("code") or "")
+        if _normalize_assignee_status(assignee_statuses.get(code, "Assigned")) == "Hold":
+            return True
+    return False
+
+
+def _internal_it_task_any_assignee_on_delay(
+    assignees: list[dict],
+    assignee_statuses: dict[str, str],
+) -> bool:
+    for item in assignees:
+        code = str(item.get("code") or "")
+        if _normalize_assignee_status(assignee_statuses.get(code, "Assigned")) == "Delay":
+            return True
+    return False
+
+
+def _internal_it_task_can_manager_hold(
+    assignees: list[dict],
+    assignee_statuses: dict[str, str],
+) -> bool:
+    if _internal_it_task_any_assignee_on_hold(assignees, assignee_statuses):
+        return False
+    if _internal_it_task_any_assignee_on_delay(assignees, assignee_statuses):
+        return False
+    if _internal_it_task_all_assignees_completed(assignees, assignee_statuses):
+        return False
+    for item in assignees:
+        code = str(item.get("code") or "")
+        status = _normalize_assignee_status(assignee_statuses.get(code, "Assigned"))
+        if status in ("Assigned", "In Progress"):
+            return True
+    return False
+
+
+def _internal_it_task_manager_actions(
+    assignees: list[dict],
+    assignee_statuses: dict[str, str],
+    manager_status: str,
+) -> list[str]:
+    normalized = _normalize_manager_status(manager_status)
+    if _internal_it_task_manager_is_terminal(normalized):
+        return []
+    actions: list[str] = []
+    if _internal_it_task_all_assignees_completed(assignees, assignee_statuses):
+        actions.extend(["close", "continue"])
+    elif _internal_it_task_any_assignee_on_hold(assignees, assignee_statuses):
+        actions.append("continue")
+    elif _internal_it_task_any_assignee_on_delay(assignees, assignee_statuses):
+        actions.append("delay")
+    elif _internal_it_task_can_manager_hold(assignees, assignee_statuses):
+        actions.append("hold")
+    actions.append("cancel")
+    return actions
+
+
+def _internal_it_task_status_history_entries(d: dict, assignee_code: str = "") -> list[dict]:
+    history = d.get("status_history") or []
+    if not isinstance(history, list):
+        return []
+    code_filter = str(assignee_code or "").strip()
+    out: list[dict] = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        status = _normalize_assignee_status(item.get("status") or "")
+        if not status:
+            continue
+        entry_code = str(item.get("assignee_code") or "").strip()
+        if code_filter and entry_code != code_filter:
+            continue
+        out.append({
+            "assignee_code": entry_code,
+            "assignee_name": (item.get("assignee_name") or "").strip() or "—",
+            "status": status,
+            "changed_by": (item.get("changed_by") or "").strip() or "—",
+            "changed_at": _format_firestore_date_ist(item.get("changed_at")),
+            "changed_time": _format_firestore_time_ist_12h(item.get("changed_at")) or "—",
+        })
+    return out
+
+
+def _internal_it_task_append_status_history(
+    history: list,
+    *,
+    assignee_code: str,
+    assignee_name: str,
+    status: str,
+    changed_by: str,
+    changed_at,
+) -> list:
+    if not isinstance(history, list):
+        history = []
+    history.append({
+        "assignee_code": str(assignee_code or "").strip(),
+        "assignee_name": (assignee_name or "").strip(),
+        "status": _normalize_assignee_status(status),
+        "changed_at": changed_at,
+        "changed_by": (changed_by or "").strip() or "it_portal",
+    })
+    return history
+
+
+def _internal_it_task_user_comments(d: dict) -> list[dict]:
+    manager_email = IT_MANAGER_EMAIL.lower()
+    return [
+        item for item in _internal_it_task_comments(d)
+        if (item.get("created_by") or "").strip().lower() != manager_email
+    ]
+
+
+def _assignee_completed_from_progress(
+    history_entries: list[dict],
+    assignee_code: str,
+) -> bool:
+    code = str(assignee_code or "").strip()
+    events = [
+        entry for entry in history_entries
+        if str(entry.get("assignee_code") or "") == code
+    ]
+    if not events:
+        return False
+    statuses = [entry.get("status") or "" for entry in events]
+    if "Completed" not in statuses:
+        return False
+    completed_idx = next(
+        (idx for idx, status in enumerate(statuses) if status == "Completed"),
+        -1,
+    )
+    if completed_idx < 0:
+        return False
+    return "In Progress" in statuses[: completed_idx + 1]
+
+
+def _can_manager_close_task(
+    assignees: list[dict],
+    assignee_statuses: dict[str, str],
+    history_entries: list[dict] | None = None,
+) -> bool:
+    """Manager can review (Close/Continue) once every assignee is Completed."""
+    del history_entries
+    return _internal_it_task_all_assignees_completed(assignees, assignee_statuses)
+
+
+def _internal_it_task_is_manager_actor(changed_by: str) -> bool:
+    return (changed_by or "").strip().lower() == IT_MANAGER_EMAIL.lower()
+
+
+def _internal_it_task_status_change_display(
+    status: str,
+    *,
+    is_manager: bool,
+) -> str:
+    normalized = _normalize_assignee_status(status)
+    if normalized == "Assigned":
+        return "Assigned"
+    if is_manager and normalized == "Hold":
+        return "Manager changed to Hold"
+    if is_manager and normalized == "Cancelled":
+        return "Manager cancelled task"
+    if is_manager:
+        return f"Manager changed to {normalized}"
+    return normalized
+
+
+def _internal_it_task_status_changed_by_display(
+    changed_by: str,
+    assignee_name: str = "",
+) -> str:
+    if _internal_it_task_is_manager_actor(changed_by):
+        return "Manager"
+    name = (assignee_name or "").strip()
+    if name:
+        return name
+    actor = (changed_by or "").strip()
+    return actor or "—"
+
+
+INTERNAL_IT_TASK_CORE_STATUS_PATH: tuple[str, ...] = (
+    "Assigned",
+    "In Progress",
+    "Completed",
+)
+
+
+def _internal_it_task_placeholder_milestone(status: str) -> dict:
+    normalized = _normalize_assignee_status(status)
+    return {
+        "status": normalized,
+        "display_label": normalized,
+        "changed_by": "—",
+        "changed_by_display": "—",
+        "is_manager": False,
+        "changed_at": "—",
+        "changed_time": "—",
+        "pending": True,
+    }
+
+
+def _internal_it_task_ensure_core_prerequisites(
+    milestones: list[dict],
+    target_status: str,
+) -> None:
+    if target_status not in INTERNAL_IT_TASK_CORE_STATUS_PATH:
+        return
+    target_idx = INTERNAL_IT_TASK_CORE_STATUS_PATH.index(target_status)
+    present = [m.get("status") for m in milestones]
+    for idx in range(target_idx):
+        core_status = INTERNAL_IT_TASK_CORE_STATUS_PATH[idx]
+        if core_status not in present:
+            milestones.insert(idx, _internal_it_task_placeholder_milestone(core_status))
+            present.insert(idx, core_status)
+
+
+def _internal_it_task_pad_core_statuses(milestones: list[dict]) -> list[dict]:
+    """Ensure Assigned → In Progress → Completed always appear on the timeline."""
+    if not milestones:
+        return [
+            _internal_it_task_placeholder_milestone(status)
+            for status in INTERNAL_IT_TASK_CORE_STATUS_PATH
+        ]
+    out: list[dict] = []
+    for milestone in milestones:
+        status = milestone.get("status") or ""
+        if status in INTERNAL_IT_TASK_CORE_STATUS_PATH:
+            _internal_it_task_ensure_core_prerequisites(out, status)
+        out.append(milestone)
+    present = {m.get("status") for m in out}
+    for status in INTERNAL_IT_TASK_CORE_STATUS_PATH:
+        if status not in present:
+            out.append(_internal_it_task_placeholder_milestone(status))
+    return out
+
+
+def _internal_it_task_history_entry_to_milestone(
+    entry: dict,
+    assignee_name: str,
+) -> dict:
+    status = entry.get("status") or ""
+    is_manager = _internal_it_task_is_manager_actor(entry.get("changed_by") or "")
+    return {
+        "status": status,
+        "display_label": _internal_it_task_status_change_display(
+            status,
+            is_manager=is_manager,
+        ),
+        "changed_by": (entry.get("changed_by") or "").strip() or "—",
+        "changed_by_display": _internal_it_task_status_changed_by_display(
+            entry.get("changed_by") or "",
+            entry.get("assignee_name") or assignee_name,
+        ),
+        "is_manager": is_manager,
+        "changed_at": entry.get("changed_at") or "—",
+        "changed_time": entry.get("changed_time") or "—",
+        "pending": False,
+    }
+
+
+def _internal_it_task_status_timeline(
+    d: dict,
+    assignees: list[dict],
+) -> list[dict]:
+    history = _internal_it_task_status_history_entries(d)
+    by_code: dict[str, list[dict]] = {}
+    for entry in history:
+        code = str(entry.get("assignee_code") or "")
+        by_code.setdefault(code, []).append(entry)
+
+    blocks: list[dict] = []
+    for item in assignees:
+        code = str(item.get("code") or "")
+        name = (item.get("name") or f"Engineer {code}").strip()
+        milestones: list[dict] = []
+        for entry in by_code.get(code, []):
+            milestone = _internal_it_task_history_entry_to_milestone(entry, name)
+            status = milestone.get("status") or ""
+            if status in INTERNAL_IT_TASK_CORE_STATUS_PATH:
+                _internal_it_task_ensure_core_prerequisites(milestones, status)
+            milestones.append(milestone)
+        milestones = _internal_it_task_pad_core_statuses(milestones)
+        blocks.append({
+            "code": code,
+            "name": name,
+            "milestones": milestones,
+        })
+    return blocks
+
+
+def _internal_it_task_status_timeline_text(
+    d: dict,
+    assignees: list[dict],
+) -> str:
+    blocks: list[str] = []
+    for item in _internal_it_task_status_timeline(d, assignees):
+        lines = [item.get("name") or "—"]
+        for entry in item.get("milestones") or []:
+            stamp = f"{entry.get('changed_at') or '—'} {entry.get('changed_time') or ''}".strip()
+            who = entry.get("changed_by_display") or "—"
+            lines.append(f"{entry.get('display_label') or entry.get('status') or '—'} — {stamp} — {who}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks).strip()
+
+
+def _internal_it_task_user_comments_text(comments: list[dict]) -> str:
+    parts: list[str] = []
+    for item in comments:
+        stamp = f"{item.get('created_at') or '—'} {item.get('created_time') or ''}".strip()
+        author = item.get("created_by") or "—"
+        text = item.get("comment") or ""
+        parts.append(f"{stamp} - {author}: {text}")
+    return "\n\n".join(parts).strip()
+
+
+def _internal_it_task_comments_text(comments: list[dict]) -> str:
+    return _internal_it_task_user_comments_text(comments)
+
+
+def _normalize_manager_status(status: str) -> str:
+    normalized = (status or "").strip() or INTERNAL_IT_TASK_MANAGER_STATUS_OPEN
+    if normalized in ("Done", "Completed"):
+        return INTERNAL_IT_TASK_MANAGER_STATUS_DONE
+    if normalized == INTERNAL_IT_TASK_MANAGER_STATUS_CANCELLED:
+        return INTERNAL_IT_TASK_MANAGER_STATUS_CANCELLED
+    return INTERNAL_IT_TASK_MANAGER_STATUS_OPEN
+
+
+def _internal_it_task_manager_is_terminal(manager_status: str) -> bool:
+    normalized = _normalize_manager_status(manager_status)
+    return normalized in (
+        INTERNAL_IT_TASK_MANAGER_STATUS_DONE,
+        INTERNAL_IT_TASK_MANAGER_STATUS_CANCELLED,
+    )
+
+
+INTERNAL_IT_TASK_STATUS_FILTER_KEYS: tuple[str, ...] = (
+    "total",
+    "in_progress",
+    "hold",
+    "completed",
+    "closed",
+)
+
+
+def _internal_it_task_normalize_status_filter(raw: str) -> str:
+    normalized = (raw or "").strip().lower().replace(" ", "_")
+    if normalized in ("", "total", "all"):
+        return ""
+    if normalized in ("in_progress", "progress"):
+        return "in_progress"
+    if normalized in INTERNAL_IT_TASK_STATUS_FILTER_KEYS:
+        return normalized
+    return ""
+
+
+def _internal_it_task_engineer_status_bucket(row: dict) -> str | None:
+    if row.get("manager_status") == INTERNAL_IT_TASK_MANAGER_STATUS_DONE:
+        return "closed"
+    if row.get("is_cancelled"):
+        return None
+    my_status = _normalize_assignee_status(row.get("my_status") or "")
+    if my_status == "In Progress":
+        return "in_progress"
+    if my_status == "Hold":
+        return "hold"
+    if my_status == "Completed":
+        return "completed"
+    return None
+
+
+def _internal_it_task_manager_status_bucket(row: dict) -> str | None:
+    if row.get("manager_status") == INTERNAL_IT_TASK_MANAGER_STATUS_DONE:
+        return "closed"
+    if row.get("is_cancelled"):
+        return None
+    statuses = [
+        _normalize_assignee_status(status)
+        for status in (row.get("assignee_statuses") or {}).values()
+    ]
+    if statuses and all(status == "Completed" for status in statuses):
+        return "completed"
+    if any(status == "Hold" for status in statuses):
+        return "hold"
+    if any(status == "In Progress" for status in statuses):
+        return "in_progress"
+    return None
+
+
+def _internal_it_task_status_stats(
+    rows: list[dict],
+    *,
+    view: str,
+) -> dict[str, int]:
+    bucket_fn = (
+        _internal_it_task_engineer_status_bucket
+        if view == "engineer"
+        else _internal_it_task_manager_status_bucket
+    )
+    stats = {
+        "total": len(rows),
+        "overdue": 0,
+        "in_progress": 0,
+        "hold": 0,
+        "completed": 0,
+        "closed": 0,
+    }
+    for row in rows:
+        if _internal_it_task_due_period_match(row.get("due_date") or "", "overdue"):
+            stats["overdue"] += 1
+        bucket = bucket_fn(row)
+        if bucket in stats:
+            stats[bucket] += 1
+    return stats
+
+
+def _filter_internal_it_tasks_by_status(
+    rows: list[dict],
+    status_filter: str,
+    *,
+    view: str,
+) -> list[dict]:
+    normalized = _internal_it_task_normalize_status_filter(status_filter)
+    if not normalized:
+        return rows
+    bucket_fn = (
+        _internal_it_task_engineer_status_bucket
+        if view == "engineer"
+        else _internal_it_task_manager_status_bucket
+    )
+    return [row for row in rows if bucket_fn(row) == normalized]
+
+
+def _internal_it_task_type(raw: str) -> str:
+    task_type = (raw or "").strip() or "Individual"
+    if task_type not in INTERNAL_IT_TASK_TYPES:
+        task_type = "Individual"
+    return task_type
+
+
+def _internal_it_task_for(raw: str) -> str:
+    task_for = (raw or "").strip() or "One time"
+    if task_for not in INTERNAL_IT_TASK_FOR_OPTIONS:
+        task_for = "One time"
+    return task_for
+
+
+def _internal_it_task_assignees_from_doc(d: dict, options: list[dict] | None = None) -> list[dict]:
+    assignees = d.get("assignees") or []
+    if isinstance(assignees, list) and assignees:
+        out = []
+        for item in assignees:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or "").strip()
+            if not code:
+                continue
+            name = (item.get("name") or "").strip()
+            if not name and options:
+                name = _it_engineer_label(options, code)
+            out.append({
+                "code": code,
+                "name": name or f"Engineer {code}",
+                "wa_id": (item.get("wa_id") or "").strip(),
+            })
+        if out:
+            return out
+    code = str(d.get("assignee_code") or "").strip()
+    if not code:
+        return []
+    name = (d.get("assignee_name") or "").strip()
+    if not name and options:
+        name = _it_engineer_label(options, code)
+    return [{
+        "code": code,
+        "name": name or f"Engineer {code}",
+        "wa_id": (d.get("assignee_wa") or "").strip(),
+    }]
+
+
+def _internal_it_task_assignee_statuses_from_doc(d: dict, assignees: list[dict]) -> dict[str, str]:
+    raw = d.get("assignee_statuses") or {}
+    legacy_default = _normalize_assignee_status(d.get("assignee_status") or "Assigned")
+    raw_status = (d.get("status") or "").strip()
+    if raw_status in INTERNAL_IT_TASK_ASSIGNEE_STATUSES or raw_status == "Progress":
+        legacy_default = _normalize_assignee_status(raw_status)
+    elif raw_status == "Completed":
+        legacy_default = "Completed"
+    elif raw_status == "Done":
+        legacy_default = _normalize_assignee_status(d.get("assignee_status") or "Assigned")
+
+    if isinstance(raw, dict) and raw:
+        return {
+            str(item["code"]): _normalize_assignee_status(raw.get(str(item["code"])) or legacy_default)
+            for item in assignees
+        }
+    return {str(item["code"]): legacy_default for item in assignees}
+
+
+def _internal_it_task_row_assignee_views(
+    assignees: list[dict],
+    assignee_statuses: dict[str, str],
+) -> list[dict]:
+    views = []
+    for item in assignees:
+        code = str(item.get("code") or "")
+        status = assignee_statuses.get(code, "Assigned")
+        views.append({
+            "code": code,
+            "name": item.get("name") or "—",
+            "status": status,
+            "next_statuses": _internal_it_task_next_statuses(status),
+        })
+    return views
+
+
+def _internal_it_task_has_assignee(assignees: list[dict], assignee_code: str) -> bool:
+    code = str(assignee_code or "").strip()
+    if not code:
+        return False
+    return any(str(item.get("code") or "") == code for item in assignees)
+
+
+def _user_can_work_internal_it_task(task: dict, db) -> bool:
+    if _user_is_it_manager():
+        return True
+    slot = _current_user_it_engineer_slot(db)
+    if not slot:
+        return False
+    assignees = _internal_it_task_assignees_from_doc(task)
+    return _internal_it_task_has_assignee(assignees, slot)
+
 
 def _user_can_access_it() -> bool:
     if not current_user.is_authenticated:
@@ -2140,6 +2885,998 @@ def _it_engineer_label(options: list[dict], slot_code: str) -> str:
     return ""
 
 
+def _internal_it_task_collection():
+    return "internal_it_tasks"
+
+
+def _internal_it_task_id() -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    return f"ITT-{stamp}-{secrets.token_hex(2).upper()}"
+
+
+def _internal_it_task_safe_filename(name: str) -> str:
+    base = os.path.basename((name or "").strip()) or "document"
+    base = re.sub(r"[^\w.\-]+", "_", base)
+    return base[:120] or "document"
+
+
+def _internal_it_task_due_date_label(raw_due_date: str) -> tuple[str, str]:
+    due = (raw_due_date or "").strip()
+    if not due:
+        return "—", ""
+    try:
+        due_day = datetime.strptime(due[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return due, ""
+    today = _ist_today_date()
+    if due_day == today:
+        return f"{due} (Today)", "today"
+    if due_day < today:
+        return f"{due} (Overdue)", "overdue"
+    return due, ""
+
+
+INTERNAL_IT_TASK_DUE_PERIOD_FILTER_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("today", "Today"),
+    ("tomorrow", "Tomorrow"),
+    ("this_week", "This week"),
+    ("this_month", "This month"),
+)
+
+INTERNAL_IT_TASK_DUE_PERIOD_VALUES: frozenset[str] = frozenset({
+    "overdue",
+    *(key for key, _ in INTERNAL_IT_TASK_DUE_PERIOD_FILTER_OPTIONS),
+})
+
+
+def _internal_it_task_normalize_due_period(raw: str) -> str:
+    normalized = (raw or "").strip().lower().replace(" ", "_")
+    if normalized in ("", "all"):
+        return ""
+    if normalized == "thisweek":
+        normalized = "this_week"
+    if normalized == "thismonth":
+        normalized = "this_month"
+    return normalized if normalized in INTERNAL_IT_TASK_DUE_PERIOD_VALUES else ""
+
+
+def _internal_it_task_parse_due_date(raw_due_date: str):
+    due = (raw_due_date or "").strip()
+    if not due or due == "—":
+        return None
+    try:
+        return datetime.strptime(due[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _internal_it_task_week_range(today) -> tuple:
+    start = today - timedelta(days=today.weekday())
+    end = start + timedelta(days=6)
+    return start, end
+
+
+def _internal_it_task_month_range(today) -> tuple:
+    start = today.replace(day=1)
+    if today.month == 12:
+        next_month = today.replace(year=today.year + 1, month=1, day=1)
+    else:
+        next_month = today.replace(month=today.month + 1, day=1)
+    end = next_month - timedelta(days=1)
+    return start, end
+
+
+def _internal_it_task_due_period_match(raw_due_date: str, period: str) -> bool:
+    normalized = _internal_it_task_normalize_due_period(period)
+    if not normalized:
+        return True
+    due_day = _internal_it_task_parse_due_date(raw_due_date)
+    if due_day is None:
+        return False
+    today = _ist_today_date()
+    if normalized == "overdue":
+        return due_day < today
+    if normalized == "today":
+        return due_day == today
+    if normalized == "tomorrow":
+        return due_day == today + timedelta(days=1)
+    if normalized == "this_week":
+        start, end = _internal_it_task_week_range(today)
+        return start <= due_day <= end
+    if normalized == "this_month":
+        start, end = _internal_it_task_month_range(today)
+        return start <= due_day <= end
+    return True
+
+
+def _filter_internal_it_tasks_by_due_period(rows: list[dict], period: str) -> list[dict]:
+    normalized = _internal_it_task_normalize_due_period(period)
+    if not normalized:
+        return rows
+    return [
+        row for row in rows
+        if _internal_it_task_due_period_match(row.get("due_date") or "", normalized)
+    ]
+
+
+def _internal_it_task_upload_documents(task_id: str, files) -> list[dict]:
+    docs: list[dict] = []
+    if not files:
+        return docs
+
+    from firebase_admin import storage
+
+    bucket_name = (os.getenv("FIREBASE_STORAGE_BUCKET") or "").strip()
+    if not bucket_name:
+        project = (os.getenv("FIREBASE_PROJECT_ID") or "whatsapp-approval-system").strip()
+        bucket_name = f"{project}.appspot.com"
+    bucket = storage.bucket(bucket_name)
+    now = datetime.now(timezone.utc)
+    actor = (getattr(current_user, "email", None) or "it_portal").strip()
+
+    for file_storage in files:
+        if not file_storage:
+            continue
+        raw_name = (getattr(file_storage, "filename", None) or "").strip()
+        if not raw_name:
+            continue
+        content = file_storage.read()
+        if not content:
+            continue
+        safe_name = _internal_it_task_safe_filename(raw_name)
+        content_type = (
+            (getattr(file_storage, "mimetype", None) or "").strip()
+            or mimetypes.guess_type(safe_name)[0]
+            or "application/octet-stream"
+        )
+        blob_path = f"internal-it-tasks/{task_id}/{safe_name}"
+        blob = bucket.blob(blob_path)
+        blob.upload_from_string(content, content_type=content_type)
+        try:
+            blob.make_public()
+            url = blob.public_url
+        except Exception:
+            app.logger.warning(
+                "make_public failed for internal IT task doc %s; using signed URL",
+                blob_path,
+            )
+            url = blob.generate_signed_url(expiration=60 * 60 * 24 * 365)
+        docs.append({
+            "name": raw_name,
+            "url": str(url),
+            "path": blob_path,
+            "content_type": content_type,
+            "uploaded_at": now,
+            "uploaded_by": actor,
+        })
+    return docs
+
+
+def _internal_it_task_delete_storage_path(blob_path: str) -> None:
+    path = (blob_path or "").strip()
+    if not path:
+        return
+    from firebase_admin import storage
+
+    bucket_name = (os.getenv("FIREBASE_STORAGE_BUCKET") or "").strip()
+    if not bucket_name:
+        project = (os.getenv("FIREBASE_PROJECT_ID") or "whatsapp-approval-system").strip()
+        bucket_name = f"{project}.appspot.com"
+    bucket = storage.bucket(bucket_name)
+    bucket.blob(path).delete()
+
+
+def _internal_it_task_comments(d: dict) -> list[dict]:
+    comments = d.get("comments") or []
+    if not isinstance(comments, list):
+        return []
+    out: list[dict] = []
+    for item in comments:
+        if not isinstance(item, dict):
+            continue
+        text = (item.get("comment") or "").strip()
+        if not text:
+            continue
+        out.append({
+            "comment": text,
+            "created_by": (item.get("created_by") or "").strip() or "—",
+            "created_at": _format_firestore_date_ist(item.get("created_at")),
+            "created_time": _format_firestore_time_ist_12h(item.get("created_at")) or "—",
+        })
+    return out
+
+
+def _internal_it_task_row(d: dict, snap_id: str) -> dict:
+    docs = d.get("documents") or []
+    if not isinstance(docs, list):
+        docs = []
+    due_date = (d.get("due_date") or "").strip()
+    due_label, due_state = _internal_it_task_due_date_label(due_date)
+    manager_status = _normalize_manager_status(d.get("status"))
+    task_type = _internal_it_task_type(d.get("task_type"))
+    assignees = _internal_it_task_assignees_from_doc(d)
+    assignee_statuses = _internal_it_task_assignee_statuses_from_doc(d, assignees)
+    assignee_views = _internal_it_task_row_assignee_views(assignees, assignee_statuses)
+    primary = assignees[0] if assignees else {}
+    closed_at = d.get("closed_at")
+    assignee_names = ", ".join(
+        (item.get("name") or "").strip()
+        for item in assignees
+        if (item.get("name") or "").strip()
+    ) or "—"
+    status_history = _internal_it_task_status_history_entries(d)
+    user_comments = _internal_it_task_user_comments(d)
+    all_comments = _internal_it_task_comments(d)
+    return {
+        "request_id": d.get("task_id") or snap_id,
+        "task_type": task_type,
+        "assignee_code": primary.get("code") or "",
+        "assignee_name": primary.get("name") or "—",
+        "assignee_names": assignee_names,
+        "assignees": assignee_views,
+        "category": d.get("task_category") or "—",
+        "task_for": _internal_it_task_for(d.get("task_for")),
+        "description": d.get("task_description") or "—",
+        "due_date": due_date or "—",
+        "due_date_label": due_label,
+        "due_state": due_state,
+        "priority": d.get("priority") or "—",
+        "documents": [
+            {
+                "name": (item.get("name") or "Document").strip() if isinstance(item, dict) else "Document",
+                "url": (item.get("url") or "").strip() if isinstance(item, dict) else "",
+                "path": (item.get("path") or "").strip() if isinstance(item, dict) else "",
+                "uploaded_at": _format_firestore_date_ist(item.get("uploaded_at")) if isinstance(item, dict) else "—",
+                "uploaded_time": _format_firestore_time_ist_12h(item.get("uploaded_at")) if isinstance(item, dict) else "—",
+                "uploaded_by": (item.get("uploaded_by") or "").strip() if isinstance(item, dict) else "—",
+            }
+            for item in docs
+            if isinstance(item, dict) and (item.get("url") or "").strip()
+        ],
+        "documents_count": len([
+            1 for item in docs
+            if isinstance(item, dict) and (item.get("url") or "").strip()
+        ]),
+        "manager_status": manager_status,
+        "is_done": _internal_it_task_manager_is_terminal(manager_status),
+        "is_cancelled": manager_status == INTERNAL_IT_TASK_MANAGER_STATUS_CANCELLED,
+        "assignee_status": assignee_statuses.get(str(primary.get("code") or ""), "Assigned"),
+        "assignee_statuses": assignee_statuses,
+        "can_manager_close": (
+            not _internal_it_task_manager_is_terminal(manager_status)
+            and _can_manager_close_task(assignees, assignee_statuses)
+        ),
+        "manager_actions": _internal_it_task_manager_actions(
+            assignees,
+            assignee_statuses,
+            manager_status,
+        ),
+        "status_history": status_history,
+        "status_timeline": _internal_it_task_status_timeline(d, assignees),
+        "status_timeline_text": _internal_it_task_status_timeline_text(d, assignees),
+        "user_comments": user_comments,
+        "user_comments_count": len(user_comments),
+        "user_comments_text": _internal_it_task_user_comments_text(user_comments),
+        "closed_at": _format_firestore_date_ist(closed_at),
+        "closed_time": _format_firestore_time_ist_12h(closed_at) or "—",
+        "comments": all_comments,
+        "comments_count": len(all_comments),
+        "comments_text": _internal_it_task_comments_text(all_comments),
+        "created_at": _format_firestore_date_ist(d.get("created_at")),
+        "created_time": _format_firestore_time_ist_12h(d.get("created_at")) or "—",
+        "created_by": d.get("created_by") or "—",
+    }
+
+
+def _it_internal_task_redirect():
+    tab = (request.form.get("return_tab") or "internal-task-assigner").strip()
+    if tab not in ("internal-task-assigner", "internal-tasks"):
+        tab = "internal-task-assigner"
+    if tab == "internal-tasks":
+        query = {"tab": tab}
+        status_filter = (request.form.get("filter_task_status") or "").strip()
+        due_period = (request.form.get("filter_due_period") or "").strip()
+        if status_filter:
+            query["task_status"] = status_filter
+        if due_period:
+            query["due_period"] = due_period
+        return redirect(url_for("it", **query))
+    if tab == "internal-task-assigner":
+        query = {"tab": tab}
+        assignee_code = (request.form.get("filter_assignee_code") or "").strip()
+        status_filter = (request.form.get("filter_task_status") or "").strip()
+        due_period = (request.form.get("filter_due_period") or "").strip()
+        if assignee_code:
+            query["assignee_code"] = assignee_code
+        if status_filter:
+            query["task_status"] = status_filter
+        if due_period:
+            query["due_period"] = due_period
+        return redirect(url_for("it", **query))
+    return redirect(url_for("it", tab=tab))
+
+
+def fetch_internal_it_tasks(
+    *,
+    due_date_filter: str = "",
+    assignee_code_filter: str = "",
+    category_filter: str = "",
+    assignee_slot_filter: str = "",
+):
+    db, err = _get_firestore_client()
+    if err:
+        return [], err
+    try:
+        rows = []
+        snaps = (
+            db.collection(_internal_it_task_collection())
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .stream()
+        )
+        for snap in snaps:
+            row = _internal_it_task_row(snap.to_dict() or {}, snap.id)
+            if due_date_filter and row["due_date"] != due_date_filter:
+                continue
+            if assignee_code_filter and not _internal_it_task_has_assignee(row["assignees"], assignee_code_filter):
+                continue
+            if assignee_slot_filter and not _internal_it_task_has_assignee(row["assignees"], assignee_slot_filter):
+                continue
+            if category_filter and row["category"] != category_filter:
+                continue
+            rows.append(row)
+        return rows, None
+    except Exception as e:
+        app.logger.exception("Firestore internal IT tasks fetch failed")
+        return [], _firestore_user_message(e)
+
+
+def _resolve_internal_it_task_assignees(
+    db,
+    task_type: str,
+    assignee_code: str,
+    assignee_codes: list[str],
+) -> tuple[list[dict], str | None]:
+    options = _it_engineer_options(db)
+    codes: list[str] = []
+    if task_type == "Joined":
+        seen: set[str] = set()
+        for raw in assignee_codes:
+            code = str(raw or "").strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            codes.append(code)
+        if len(codes) < 2:
+            return [], "Please select at least two assignees for a joined task."
+    else:
+        code = str(assignee_code or "").strip()
+        if not code:
+            return [], "Please select an assignee."
+        codes = [code]
+
+    assignees: list[dict] = []
+    for code in codes:
+        name = _it_engineer_label(options, code)
+        engineer_wa = _it_engineer_wa_for_slot(int(code))
+        if not name or not engineer_wa:
+            return [], f"Invalid assignee: {code}"
+        assignees.append({
+            "code": str(code),
+            "name": name,
+            "wa_id": engineer_wa,
+        })
+    return assignees, None
+
+
+def _create_internal_it_task() -> tuple[bool, str | None]:
+    if not _user_is_it_manager():
+        return False, "Only IT managers can create internal tasks."
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+
+    task_type = _internal_it_task_type(request.form.get("task_type"))
+    task_for = _internal_it_task_for(request.form.get("task_for"))
+    category = (request.form.get("task_category") or "").strip()
+    description = (request.form.get("task_description") or "").strip()
+    due_date = (request.form.get("due_date") or "").strip()
+    priority = (request.form.get("priority") or "").strip()
+    assignee_codes = request.form.getlist("assignee_codes")
+    assignee_code = (request.form.get("assignee_code") or "").strip()
+
+    assignees, assignee_err = _resolve_internal_it_task_assignees(
+        db,
+        task_type,
+        assignee_code,
+        assignee_codes,
+    )
+    if assignee_err:
+        return False, assignee_err
+    if category not in INTERNAL_IT_TASK_CATEGORIES:
+        return False, "Please select a valid task category."
+    if not description:
+        return False, "Task description is required."
+    if not due_date:
+        return False, "Due date is required."
+    if priority not in INTERNAL_IT_TASK_PRIORITIES:
+        return False, "Please select a valid priority."
+    if task_for not in INTERNAL_IT_TASK_FOR_OPTIONS:
+        return False, "Please select a valid task schedule."
+
+    try:
+        datetime.strptime(due_date, "%Y-%m-%d")
+    except ValueError:
+        return False, "Invalid due date."
+
+    task_id = _internal_it_task_id()
+    primary = assignees[0]
+    assignee_statuses = {item["code"]: "Assigned" for item in assignees}
+    now = datetime.now(timezone.utc)
+    actor = (getattr(current_user, "email", None) or "it_portal").strip()
+    status_history: list = []
+    for item in assignees:
+        status_history = _internal_it_task_append_status_history(
+            status_history,
+            assignee_code=item["code"],
+            assignee_name=item["name"],
+            status="Assigned",
+            changed_by=actor,
+            changed_at=now,
+        )
+    doc = {
+        "task_id": task_id,
+        "type": "INTERNAL_IT_TASK",
+        "task_type": task_type,
+        "task_for": task_for,
+        "assignees": assignees,
+        "assignee_code": primary["code"],
+        "assignee_name": primary["name"],
+        "assignee_wa": primary["wa_id"],
+        "assignee_statuses": assignee_statuses,
+        "assignee_status": "Assigned",
+        "status_history": status_history,
+        "task_category": category,
+        "task_description": description,
+        "due_date": due_date,
+        "priority": priority,
+        "documents": [],
+        "created_at": now,
+        "created_by": actor,
+        "status": INTERNAL_IT_TASK_MANAGER_STATUS_OPEN,
+        "comments": [],
+    }
+    try:
+        db.collection(_internal_it_task_collection()).document(task_id).set(doc)
+    except Exception as e:
+        app.logger.exception("Internal IT task save failed task_id=%s", task_id)
+        return False, _firestore_user_message(e)
+    app.logger.info("Internal IT task created task_id=%s by=%s", task_id, actor)
+    return True, None
+
+
+def _internal_it_task_load(db, task_id: str):
+    rid = (task_id or "").strip()
+    if not rid:
+        return None, None, "Missing task id"
+    ref = db.collection(_internal_it_task_collection()).document(rid)
+    snap = ref.get()
+    if not snap.exists:
+        return None, None, "Task not found"
+    return ref, snap.to_dict() or {}, None
+
+
+def _update_internal_it_task_assignee_status(
+    task_id: str,
+    status: str,
+    *,
+    assignee_code: str = "",
+    comment: str = "",
+) -> tuple[bool, str | None]:
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, task, err = _internal_it_task_load(db, task_id)
+    if err:
+        return False, err
+    if not _user_can_work_internal_it_task(task, db):
+        return False, "You are not allowed to update this task."
+    if _user_is_it_manager():
+        return False, "Managers cannot change assignee status."
+    if _internal_it_task_manager_is_terminal(_normalize_manager_status(task.get("status"))):
+        return False, "This task is no longer open."
+    new_status = _normalize_assignee_status(status)
+    assignees = _internal_it_task_assignees_from_doc(task)
+    task_type = _internal_it_task_type(task.get("task_type"))
+    actor_slot = _current_user_it_engineer_slot(db)
+    target_code = str(assignee_code or actor_slot or "").strip()
+    if not target_code:
+        filter_code = (request.form.get("filter_assignee_code") or "").strip()
+        if filter_code and _internal_it_task_has_assignee(assignees, filter_code):
+            target_code = filter_code
+    if not target_code:
+        return False, "Could not determine assignee. Select who you are on the Internal Tasks tab."
+    if not _internal_it_task_has_assignee(assignees, target_code):
+        return False, "You are not assigned to this task."
+    if not _user_is_it_manager() and actor_slot and target_code != actor_slot:
+        return False, "You can only update your own task status."
+
+    assignee_statuses = _internal_it_task_assignee_statuses_from_doc(task, assignees)
+    current_status = assignee_statuses.get(target_code, "Assigned")
+    if _normalize_assignee_status(current_status) == "Hold":
+        return False, "Task is on hold. Wait for your manager to continue the task."
+    if _normalize_assignee_status(current_status) == "Delay":
+        return False, "Task is delayed. Wait for your manager to update the due date."
+    if _normalize_assignee_status(current_status) == "Cancelled":
+        return False, "This task has been cancelled by your manager."
+    if new_status == "Hold":
+        return False, "Only managers can put tasks on hold."
+    if new_status == "Delay":
+        delay_comment = (comment or "").strip()
+        if not delay_comment:
+            return False, "Comment is required when marking a task as Delay."
+    if not _internal_it_task_status_allowed(current_status, new_status):
+        allowed = _internal_it_task_next_statuses(current_status)
+        if allowed:
+            return False, f"Invalid status change. Next allowed: {', '.join(allowed)}."
+        return False, "This task status can no longer be changed."
+    if new_status == current_status:
+        return False, "Status is already set to that value."
+
+    assignee_name = next(
+        (item.get("name") or "" for item in assignees if str(item.get("code") or "") == target_code),
+        "",
+    )
+    actor = (getattr(current_user, "email", None) or "it_portal").strip()
+    now = datetime.now(timezone.utc)
+    assignee_statuses[target_code] = new_status
+    history = _internal_it_task_append_status_history(
+        task.get("status_history") or [],
+        assignee_code=target_code,
+        assignee_name=assignee_name,
+        status=new_status,
+        changed_by=actor,
+        changed_at=now,
+    )
+    update = {
+        "assignee_statuses": assignee_statuses,
+        "status_history": history,
+        "updated_at": now,
+        "updated_by": actor,
+    }
+    if new_status == "Delay":
+        comments = task.get("comments") or []
+        if not isinstance(comments, list):
+            comments = []
+        comments.append({
+            "comment": (comment or "").strip(),
+            "created_at": now,
+            "created_by": actor,
+        })
+        update["comments"] = comments
+    if task_type == "Individual":
+        update["assignee_status"] = new_status
+    try:
+        ref.update(update)
+    except Exception as e:
+        app.logger.exception("Internal IT task assignee status update failed task_id=%s", task_id)
+        return False, _firestore_user_message(e)
+    return True, None
+
+
+def _update_internal_it_task_due_date(task_id: str, due_date: str) -> tuple[bool, str | None]:
+    if not _user_is_it_manager():
+        return False, "Only IT managers can change due dates."
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, task, err = _internal_it_task_load(db, task_id)
+    if err:
+        return False, err
+    if _internal_it_task_manager_is_terminal(_normalize_manager_status(task.get("status"))):
+        return False, "This task is no longer open."
+    new_due_date = (due_date or "").strip()
+    if not new_due_date:
+        return False, "Due date is required."
+    try:
+        datetime.strptime(new_due_date, "%Y-%m-%d")
+    except ValueError:
+        return False, "Invalid due date."
+    actor = (getattr(current_user, "email", None) or "it_portal").strip()
+    now = datetime.now(timezone.utc)
+    try:
+        ref.update({
+            "due_date": new_due_date,
+            "due_date_updated_at": now,
+            "due_date_updated_by": actor,
+            "updated_at": now,
+            "updated_by": actor,
+        })
+    except Exception as e:
+        app.logger.exception("Internal IT task due date update failed task_id=%s", task_id)
+        return False, _firestore_user_message(e)
+    return True, None
+
+
+def _internal_it_task_manager_action(
+    task_id: str,
+    action: str,
+    feedback: str,
+    due_date: str = "",
+) -> tuple[bool, str | None]:
+    if not _user_is_it_manager():
+        return False, "Only IT managers can review tasks."
+    normalized_action = (action or "").strip().lower()
+    if normalized_action not in ("close", "continue", "hold", "delay", "cancel"):
+        return False, "Invalid action."
+    text = (feedback or "").strip()
+    if not text:
+        return False, "Feedback is required."
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, task, err = _internal_it_task_load(db, task_id)
+    if err:
+        return False, err
+    if _internal_it_task_manager_is_terminal(_normalize_manager_status(task.get("status"))):
+        return False, "This task is no longer open."
+    assignees = _internal_it_task_assignees_from_doc(task)
+    assignee_statuses = _internal_it_task_assignee_statuses_from_doc(task, assignees)
+    allowed_actions = _internal_it_task_manager_actions(
+        assignees,
+        assignee_statuses,
+        task.get("status") or "",
+    )
+    if normalized_action not in allowed_actions:
+        return False, "This action is not available for the current task status."
+    actor = (getattr(current_user, "email", None) or "it_portal").strip()
+    now = datetime.now(timezone.utc)
+    comments = task.get("comments") or []
+    if not isinstance(comments, list):
+        comments = []
+    comments.append({
+        "comment": text,
+        "created_at": now,
+        "created_by": actor,
+        "manager_action": normalized_action,
+    })
+    updates: dict = {
+        "comments": comments,
+        "updated_at": now,
+        "updated_by": actor,
+    }
+    if normalized_action == "close":
+        updates.update({
+            "status": INTERNAL_IT_TASK_MANAGER_STATUS_DONE,
+            "closed_at": now,
+            "closed_by": actor,
+        })
+    elif normalized_action == "hold":
+        new_statuses = {str(item["code"]): "Hold" for item in assignees}
+        history = task.get("status_history") or []
+        if not isinstance(history, list):
+            history = []
+        for item in assignees:
+            history = _internal_it_task_append_status_history(
+                history,
+                assignee_code=item["code"],
+                assignee_name=item.get("name") or "",
+                status="Hold",
+                changed_by=actor,
+                changed_at=now,
+            )
+        updates.update({
+            "assignee_statuses": new_statuses,
+            "assignee_status": "Hold",
+            "status_history": history,
+        })
+    elif normalized_action == "delay":
+        new_due_date = (due_date or "").strip()
+        if not new_due_date:
+            return False, "Due date is required."
+        try:
+            datetime.strptime(new_due_date, "%Y-%m-%d")
+        except ValueError:
+            return False, "Invalid due date."
+        new_statuses = dict(assignee_statuses)
+        history = task.get("status_history") or []
+        if not isinstance(history, list):
+            history = []
+        delayed_codes: list[str] = []
+        for item in assignees:
+            code = str(item.get("code") or "")
+            if _normalize_assignee_status(assignee_statuses.get(code, "Assigned")) != "Delay":
+                continue
+            delayed_codes.append(code)
+            new_statuses[code] = "In Progress"
+            history = _internal_it_task_append_status_history(
+                history,
+                assignee_code=code,
+                assignee_name=item.get("name") or "",
+                status="In Progress",
+                changed_by=actor,
+                changed_at=now,
+            )
+        if not delayed_codes:
+            return False, "No delayed assignee found for this task."
+        task_type = _internal_it_task_type(task.get("task_type"))
+        primary_code = str(assignees[0].get("code") or "") if assignees else ""
+        assignee_status_legacy = new_statuses.get(primary_code, "Assigned")
+        updates.update({
+            "due_date": new_due_date,
+            "due_date_updated_at": now,
+            "due_date_updated_by": actor,
+            "assignee_statuses": new_statuses,
+            "status_history": history,
+        })
+        if task_type == "Individual":
+            updates["assignee_status"] = assignee_status_legacy
+    elif normalized_action == "continue":
+        new_statuses = {str(item["code"]): "In Progress" for item in assignees}
+        history = task.get("status_history") or []
+        if not isinstance(history, list):
+            history = []
+        for item in assignees:
+            history = _internal_it_task_append_status_history(
+                history,
+                assignee_code=item["code"],
+                assignee_name=item.get("name") or "",
+                status="In Progress",
+                changed_by=actor,
+                changed_at=now,
+            )
+        updates.update({
+            "assignee_statuses": new_statuses,
+            "assignee_status": "In Progress",
+            "status_history": history,
+        })
+    elif normalized_action == "cancel":
+        new_statuses = {str(item["code"]): "Cancelled" for item in assignees}
+        history = task.get("status_history") or []
+        if not isinstance(history, list):
+            history = []
+        for item in assignees:
+            history = _internal_it_task_append_status_history(
+                history,
+                assignee_code=item["code"],
+                assignee_name=item.get("name") or "",
+                status="Cancelled",
+                changed_by=actor,
+                changed_at=now,
+            )
+        updates.update({
+            "status": INTERNAL_IT_TASK_MANAGER_STATUS_CANCELLED,
+            "cancelled_at": now,
+            "cancelled_by": actor,
+            "assignee_statuses": new_statuses,
+            "assignee_status": "Cancelled",
+            "status_history": history,
+        })
+    try:
+        ref.update(updates)
+    except Exception as e:
+        app.logger.exception(
+            "Internal IT task manager action failed task_id=%s action=%s",
+            task_id,
+            normalized_action,
+        )
+        return False, _firestore_user_message(e)
+    return True, None
+
+
+def _close_internal_it_task(task_id: str, feedback: str = "") -> tuple[bool, str | None]:
+    return _internal_it_task_manager_action(task_id, "close", feedback)
+
+
+def _reopen_internal_it_task(
+    task_id: str,
+    due_date: str,
+    description: str,
+) -> tuple[bool, str | None]:
+    if not _user_is_it_manager():
+        return False, "Only IT managers can reopen tasks."
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, task, err = _internal_it_task_load(db, task_id)
+    if err:
+        return False, err
+    if _normalize_manager_status(task.get("status")) != INTERNAL_IT_TASK_MANAGER_STATUS_DONE:
+        return False, "Only closed tasks can be reopened."
+    new_due_date = (due_date or "").strip()
+    new_description = (description or "").strip()
+    if not new_due_date:
+        return False, "Due date is required to reopen the task."
+    if not new_description:
+        return False, "Task description is required to reopen the task."
+    try:
+        datetime.strptime(new_due_date, "%Y-%m-%d")
+    except ValueError:
+        return False, "Invalid due date."
+    assignees = _internal_it_task_assignees_from_doc(task)
+    assignee_statuses = {str(item["code"]): "Assigned" for item in assignees}
+    actor = (getattr(current_user, "email", None) or "it_portal").strip()
+    now = datetime.now(timezone.utc)
+    history = task.get("status_history") or []
+    if not isinstance(history, list):
+        history = []
+    due_date_history = task.get("due_date_history") or []
+    if not isinstance(due_date_history, list):
+        due_date_history = []
+    due_date_history.append({
+        "due_date": (task.get("due_date") or "").strip(),
+        "description": (task.get("task_description") or "").strip(),
+        "archived_at": now,
+        "archived_by": actor,
+    })
+    for item in assignees:
+        history = _internal_it_task_append_status_history(
+            history,
+            assignee_code=item["code"],
+            assignee_name=item.get("name") or "",
+            status="Assigned",
+            changed_by=actor,
+            changed_at=now,
+        )
+    try:
+        ref.update({
+            "status": INTERNAL_IT_TASK_MANAGER_STATUS_OPEN,
+            "due_date": new_due_date,
+            "task_description": new_description,
+            "due_date_history": due_date_history,
+            "assignee_statuses": assignee_statuses,
+            "assignee_status": "Assigned",
+            "status_history": history,
+            "reopened_at": now,
+            "reopened_by": actor,
+            "updated_at": now,
+            "updated_by": actor,
+        })
+    except Exception as e:
+        app.logger.exception("Internal IT task reopen failed task_id=%s", task_id)
+        return False, _firestore_user_message(e)
+    return True, None
+
+
+def _add_internal_it_task_comment(task_id: str, comment: str) -> tuple[bool, str | None]:
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, task, err = _internal_it_task_load(db, task_id)
+    if err:
+        return False, err
+    if not _user_can_work_internal_it_task(task, db):
+        return False, "You are not allowed to update this task."
+    if _internal_it_task_manager_is_terminal(_normalize_manager_status(task.get("status"))):
+        return False, "This task is no longer open."
+    text = (comment or "").strip()
+    if not text:
+        return False, "Comment is required."
+    comments = task.get("comments") or []
+    if not isinstance(comments, list):
+        comments = []
+    comments.append({
+        "comment": text,
+        "created_at": datetime.now(timezone.utc),
+        "created_by": (getattr(current_user, "email", None) or "it_portal").strip(),
+    })
+    try:
+        ref.update({"comments": comments})
+    except Exception as e:
+        app.logger.exception("Internal IT task comment failed task_id=%s", task_id)
+        return False, _firestore_user_message(e)
+    return True, None
+
+
+def _append_internal_it_task_documents(task_id: str) -> tuple[bool, str | None]:
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, task, err = _internal_it_task_load(db, task_id)
+    if err:
+        return False, err
+    if not _user_can_work_internal_it_task(task, db):
+        return False, "You are not allowed to update this task."
+    if _user_is_it_manager():
+        return False, "Managers cannot upload task documents."
+    if _internal_it_task_manager_is_terminal(_normalize_manager_status(task.get("status"))):
+        return False, "This task is no longer open."
+    try:
+        new_docs = _internal_it_task_upload_documents(
+            task_id,
+            request.files.getlist("documents"),
+        )
+    except Exception as e:
+        app.logger.exception("Internal IT task document upload failed task_id=%s", task_id)
+        return False, f"Could not upload documents: {e}"
+    if not new_docs:
+        return False, "Please choose at least one document."
+    docs = task.get("documents") or []
+    if not isinstance(docs, list):
+        docs = []
+    docs.extend(new_docs)
+    try:
+        ref.update({"documents": docs})
+    except Exception as e:
+        app.logger.exception("Internal IT task document save failed task_id=%s", task_id)
+        return False, _firestore_user_message(e)
+    return True, None
+
+
+def _delete_internal_it_task_document(task_id: str, path: str) -> tuple[bool, str | None]:
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, task, err = _internal_it_task_load(db, task_id)
+    if err:
+        return False, err
+    if not _user_can_work_internal_it_task(task, db):
+        return False, "You are not allowed to update this task."
+    if _user_is_it_manager():
+        return False, "Managers cannot upload task documents."
+    if _internal_it_task_manager_is_terminal(_normalize_manager_status(task.get("status"))):
+        return False, "This task is no longer open."
+    target = (path or "").strip()
+    if not target:
+        return False, "Missing document."
+    docs = task.get("documents") or []
+    if not isinstance(docs, list):
+        docs = []
+    kept = []
+    removed = None
+    for item in docs:
+        if not isinstance(item, dict):
+            continue
+        if removed is None and (item.get("path") or "").strip() == target:
+            removed = item
+            continue
+        kept.append(item)
+    if removed is None:
+        return False, "Document not found."
+    try:
+        _internal_it_task_delete_storage_path(target)
+    except Exception:
+        app.logger.exception("Internal IT task document storage delete failed path=%s", target)
+    try:
+        ref.update({"documents": kept})
+    except Exception as e:
+        app.logger.exception("Internal IT task document metadata delete failed task_id=%s", task_id)
+        return False, _firestore_user_message(e)
+    return True, None
+
+
+def _delete_internal_it_task(task_id: str) -> tuple[bool, str | None]:
+    if not _user_is_it_manager():
+        return False, "Only IT managers can delete tasks."
+    db, err = _get_firestore_client()
+    if err:
+        return False, err
+    ref, task, err = _internal_it_task_load(db, task_id)
+    if err:
+        return False, err
+    docs = task.get("documents") or []
+    if isinstance(docs, list):
+        for item in docs:
+            if not isinstance(item, dict):
+                continue
+            blob_path = (item.get("path") or "").strip()
+            if not blob_path:
+                continue
+            try:
+                _internal_it_task_delete_storage_path(blob_path)
+            except Exception:
+                app.logger.exception(
+                    "Internal IT task storage delete failed task_id=%s path=%s",
+                    task_id,
+                    blob_path,
+                )
+    try:
+        ref.delete()
+    except Exception as e:
+        app.logger.exception("Internal IT task delete failed task_id=%s", task_id)
+        return False, _firestore_user_message(e)
+    return True, None
+
+
 def _it_row(d: dict, snap_id: str) -> dict:
     status_raw = _it_status_raw(d)
     desc = (d.get("description") or "").strip()
@@ -2159,7 +3896,15 @@ def _it_row(d: dict, snap_id: str) -> dict:
         "it_status_raw": status_raw,
         "assigned_engineer_name": d.get("assigned_engineer_name") or "—",
         "assigned_engineer_slot": d.get("assigned_engineer_slot") or 0,
+        "assigned_date": _format_firestore_date_ist(d.get("assigned_datetime")) or "—",
         "assigned_datetime": _format_firestore_time_ist_12h(d.get("assigned_datetime"))
+        or "—",
+        "engineer_closed_date": _format_firestore_date_ist(d.get("engineer_closed_at"))
+        or "—",
+        "engineer_closed_time": _format_firestore_time_ist_12h(d.get("engineer_closed_at"))
+        or "—",
+        "user_closed_date": _format_firestore_date_ist(d.get("closed_datetime")) or "—",
+        "user_closed_time": _format_firestore_time_ist_12h(d.get("closed_datetime"))
         or "—",
         "closed_datetime": _format_firestore_time_ist_12h(d.get("closed_datetime"))
         or "—",
@@ -2341,6 +4086,94 @@ def _fetch_security_it_requests_inner(
     for _, d, snap_id in buf:
         rows.append(_it_row(d, snap_id))
     return rows
+
+
+IT_ENGINEER_TICKET_PENDING_STATUSES = ("ASSIGNED", "AWAITING_USER_CLOSE")
+IT_MANAGER_TICKET_PENDING_STATUSES = ("PENDING", "ASSIGNED", "AWAITING_USER_CLOSE")
+
+
+def _it_ticket_normalize_status_filter(raw: str) -> str:
+    value = (raw or "").strip().lower()
+    if value in ("pending", "completed"):
+        return value
+    return ""
+
+
+def _it_ticket_pending_statuses(view: str) -> tuple[str, ...]:
+    if view == "manager":
+        return IT_MANAGER_TICKET_PENDING_STATUSES
+    return IT_ENGINEER_TICKET_PENDING_STATUSES
+
+
+def _it_ticket_stats(rows: list[dict], *, view: str = "engineer") -> dict:
+    pending_statuses = _it_ticket_pending_statuses(view)
+    total = len(rows)
+    pending = sum(
+        1 for row in rows if row.get("it_status_raw") in pending_statuses
+    )
+    completed = sum(1 for row in rows if row.get("it_status_raw") == "CLOSED")
+    return {"total": total, "pending": pending, "completed": completed}
+
+
+def _filter_it_tickets_by_status(
+    rows: list[dict],
+    status_filter: str,
+    *,
+    view: str = "engineer",
+) -> list[dict]:
+    pending_statuses = _it_ticket_pending_statuses(view)
+    if status_filter == "pending":
+        return [row for row in rows if row.get("it_status_raw") in pending_statuses]
+    if status_filter == "completed":
+        return [row for row in rows if row.get("it_status_raw") == "CLOSED"]
+    return rows
+
+
+def _fetch_it_engineer_tickets_inner(db, engineer_slot: str):
+    slot = int((engineer_slot or "").strip() or 0)
+    if slot <= 0:
+        return []
+    buf = []
+    for snap in _security_requests_snapshots(db, "IT"):
+        d = snap.to_dict() or {}
+        if int(d.get("assigned_engineer_slot") or 0) != slot:
+            continue
+        if _it_status_raw(d) == "PENDING":
+            continue
+        ts = d.get("assigned_datetime") or d.get("requested_datetime")
+        buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
+
+    buf.sort(key=lambda x: x[0], reverse=True)
+    buf = buf[:500]
+
+    rows = []
+    for _, d, snap_id in buf:
+        rows.append(_it_row(d, snap_id))
+    return rows
+
+
+def fetch_it_engineer_tickets(engineer_slot: str):
+    """Load IT tickets assigned to one engineer slot, newest assignment first."""
+    db, err = _get_firestore_client()
+    if err:
+        return [], err
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _fetch_it_engineer_tickets_inner,
+                db,
+                engineer_slot,
+            )
+            return future.result(timeout=25), None
+    except TimeoutError:
+        app.logger.error("Firestore IT engineer tickets fetch timed out")
+        return [], (
+            "Firestore request timed out. Check that the Cloud Run service account has "
+            "Cloud Datastore User on whatsapp-approval-system."
+        )
+    except Exception as e:
+        app.logger.exception("Firestore IT engineer tickets fetch failed")
+        return [], _firestore_user_message(e)
 
 
 def fetch_security_it_requests(
@@ -6644,8 +8477,32 @@ HR_TABS = (
 )
 
 IT_TABS = (
-    ("it-request", "IT Request"),
+    ("it-request", "Ticket Assigner"),
+    ("internal-task-assigner", "Internal Task Assigner"),
+    ("internal-tasks", "Internal Tasks"),
 )
+
+IT_MANAGER_TABS: tuple[tuple[str, str], ...] = (
+    ("it-request", "Ticket Assigner"),
+    ("internal-task-assigner", "Internal Task Assigner"),
+)
+
+IT_ASSIGNEE_TABS: tuple[tuple[str, str], ...] = (
+    ("it-tickets", "Tickets"),
+    ("internal-tasks", "Internal Tasks"),
+)
+
+
+def _it_tabs_for_user() -> tuple[tuple[str, str], ...]:
+    if _user_is_it_manager():
+        return IT_MANAGER_TABS
+    return IT_ASSIGNEE_TABS
+
+
+def _it_default_tab_for_user() -> str:
+    if _user_is_it_manager():
+        return "it-request"
+    return "it-tickets"
 
 
 def _render_requests_page(
@@ -6667,6 +8524,24 @@ def _render_requests_page(
     visitor_requests = []
     leave_requests = []
     it_requests = []
+    it_engineer_tickets = []
+    it_ticket_stats = {"total": 0, "pending": 0, "completed": 0}
+    it_ticket_filters = {"status_filter": ""}
+    internal_it_tasks = []
+    internal_it_task_assignees = []
+    internal_it_task_stats = {
+        "total": 0,
+        "overdue": 0,
+        "in_progress": 0,
+        "hold": 0,
+        "completed": 0,
+        "closed": 0,
+    }
+    internal_it_task_filters = {
+        "assignee_code": "",
+        "status_filter": "",
+        "due_period": "",
+    }
     vehicle_requests = []
     permission_emp_requests = []
     permission_cl_requests = []
@@ -6697,10 +8572,126 @@ def _render_requests_page(
             jmd_route_filter=jmd_route_filter,
         )
     elif tab == "it-request":
-        it_requests, firestore_error = fetch_security_it_requests(
+        if not _user_is_it_manager():
+            return redirect(url_for("it", tab="it-tickets"))
+        it_ticket_filters = {
+            "status_filter": _it_ticket_normalize_status_filter(
+                request.args.get("ticket_status") or "",
+            ),
+        }
+        all_it_requests, firestore_error = fetch_security_it_requests(
             ist_day=selected_day,
             jmd_route_filter=jmd_route_filter,
         )
+        if not firestore_error:
+            it_ticket_stats = _it_ticket_stats(all_it_requests, view="manager")
+            it_requests = _filter_it_tickets_by_status(
+                all_it_requests,
+                it_ticket_filters["status_filter"],
+                view="manager",
+            )
+    elif tab == "it-tickets":
+        if _user_is_it_manager():
+            return redirect(url_for("it", tab="it-request"))
+        it_ticket_filters = {
+            "status_filter": _it_ticket_normalize_status_filter(
+                request.args.get("ticket_status") or "",
+            ),
+        }
+        db, err = _get_firestore_client()
+        if err:
+            firestore_error = err
+        else:
+            active_it_slot = _resolve_active_it_engineer_slot(db, "")
+            it_engineer_slot_locked = _it_engineer_slot_locked(db)
+            if not active_it_slot:
+                it_engineer_tickets = []
+            else:
+                all_tickets, firestore_error = fetch_it_engineer_tickets(active_it_slot)
+                if not firestore_error:
+                    it_ticket_stats = _it_ticket_stats(all_tickets, view="engineer")
+                    it_engineer_tickets = _filter_it_tickets_by_status(
+                        all_tickets,
+                        it_ticket_filters["status_filter"],
+                        view="engineer",
+                    )
+    elif tab == "internal-task-assigner":
+        if not _user_is_it_manager():
+            return redirect(url_for("it", tab="internal-tasks"))
+        internal_it_task_filters = {
+            "assignee_code": (request.args.get("assignee_code") or "").strip(),
+            "status_filter": _internal_it_task_normalize_status_filter(
+                request.args.get("task_status") or "",
+            ),
+            "due_period": _internal_it_task_normalize_due_period(
+                request.args.get("due_period") or "",
+            ),
+        }
+        db, err = _get_firestore_client()
+        if err:
+            firestore_error = err
+        else:
+            internal_it_task_assignees = _it_engineer_options(db)
+            all_tasks, firestore_error = fetch_internal_it_tasks(
+                assignee_code_filter=internal_it_task_filters["assignee_code"],
+            )
+            if not firestore_error:
+                internal_it_task_stats = _internal_it_task_status_stats(
+                    all_tasks,
+                    view="manager",
+                )
+                scoped_tasks = _filter_internal_it_tasks_by_due_period(
+                    all_tasks,
+                    internal_it_task_filters["due_period"],
+                )
+                internal_it_tasks = _filter_internal_it_tasks_by_status(
+                    scoped_tasks,
+                    internal_it_task_filters["status_filter"],
+                    view="manager",
+                )
+    elif tab == "internal-tasks":
+        if _user_is_it_manager():
+            return redirect(url_for("it", tab="internal-task-assigner"))
+        internal_it_task_filters = {
+            "assignee_code": "",
+            "status_filter": _internal_it_task_normalize_status_filter(
+                request.args.get("task_status") or "",
+            ),
+            "due_period": _internal_it_task_normalize_due_period(
+                request.args.get("due_period") or "",
+            ),
+        }
+        db, err = _get_firestore_client()
+        if err:
+            firestore_error = err
+        else:
+            internal_it_task_assignees = _it_engineer_options(db)
+            active_it_slot = _resolve_active_it_engineer_slot(db, "")
+            it_engineer_slot_locked = _it_engineer_slot_locked(db)
+            if not active_it_slot:
+                internal_it_tasks = []
+            else:
+                all_tasks, firestore_error = fetch_internal_it_tasks(
+                    assignee_slot_filter=active_it_slot,
+                )
+                if not firestore_error:
+                    all_tasks = _enrich_internal_it_task_rows_for_slot(
+                        all_tasks,
+                        active_it_slot,
+                    )
+                    internal_it_task_stats = _internal_it_task_status_stats(
+                        all_tasks,
+                        view="engineer",
+                    )
+                    scoped_tasks = _filter_internal_it_tasks_by_due_period(
+                        all_tasks,
+                        internal_it_task_filters["due_period"],
+                    )
+                    internal_it_tasks = _filter_internal_it_tasks_by_status(
+                        scoped_tasks,
+                        internal_it_task_filters["status_filter"],
+                        view="engineer",
+                    )
     elif tab == "permission-request":
         permission_emp_requests, permission_cl_requests, firestore_error = (
             fetch_security_permission_requests(
@@ -6718,6 +8709,16 @@ def _render_requests_page(
             except Exception as e:
                 app.logger.exception("Firestore approver status fetch failed")
                 firestore_error = _firestore_user_message(e)
+    current_user_it_slot = ""
+    active_it_slot = ""
+    it_engineer_slot_locked = False
+    if tab in ("it-tickets", "internal-tasks", "internal-task-assigner"):
+        db_slot, _slot_err = _get_firestore_client()
+        if db_slot:
+            current_user_it_slot = _current_user_it_engineer_slot(db_slot)
+            if tab in ("it-tickets", "internal-tasks"):
+                active_it_slot = _resolve_active_it_engineer_slot(db_slot, "")
+                it_engineer_slot_locked = _it_engineer_slot_locked(db_slot)
     return render_template(
         "security.html",
         active_nav=active_nav,
@@ -6728,6 +8729,23 @@ def _render_requests_page(
         visitor_requests=visitor_requests,
         leave_requests=leave_requests,
         it_requests=it_requests,
+        it_engineer_tickets=it_engineer_tickets,
+        it_ticket_stats=it_ticket_stats,
+        it_ticket_filters=it_ticket_filters,
+        internal_it_tasks=internal_it_tasks,
+        internal_it_task_assignees=internal_it_task_assignees,
+        internal_it_task_categories=INTERNAL_IT_TASK_CATEGORIES,
+        internal_it_task_priorities=INTERNAL_IT_TASK_PRIORITIES,
+        internal_it_task_types=INTERNAL_IT_TASK_TYPES,
+        internal_it_task_for_options=INTERNAL_IT_TASK_FOR_OPTIONS,
+        internal_it_task_due_period_options=INTERNAL_IT_TASK_DUE_PERIOD_FILTER_OPTIONS,
+        internal_it_task_assignee_statuses=INTERNAL_IT_TASK_ASSIGNEE_STATUSES,
+        is_it_manager=_user_is_it_manager(),
+        current_user_it_slot=current_user_it_slot,
+        active_it_slot=active_it_slot,
+        it_engineer_slot_locked=it_engineer_slot_locked,
+        internal_it_task_filters=internal_it_task_filters,
+        internal_it_task_stats=internal_it_task_stats,
         vehicle_requests=vehicle_requests,
         permission_emp_requests=permission_emp_requests,
         permission_cl_requests=permission_cl_requests,
@@ -6756,7 +8774,151 @@ def hr():
 @app.route("/it")
 @login_required
 def it():
-    return _render_requests_page("it", "it", IT_TABS, "it-request")
+    tabs = _it_tabs_for_user()
+    return _render_requests_page("it", "it", tabs, _it_default_tab_for_user())
+
+
+@app.route("/it/internal-task", methods=["POST"])
+@login_required
+def it_internal_task_create():
+    if not _user_can_access_it() or not _user_is_it_manager():
+        abort(403)
+    ok, err = _create_internal_it_task()
+    if ok:
+        flash("Internal IT task created.", "success")
+    else:
+        flash(err or "Could not create internal IT task.", "danger")
+    return redirect(url_for("it", tab="internal-task-assigner"))
+
+
+@app.route("/it/internal-task/status", methods=["POST"])
+@login_required
+def it_internal_task_status():
+    if not _user_can_access_it():
+        abort(403)
+    ok, err = _update_internal_it_task_assignee_status(
+        request.form.get("task_id") or "",
+        request.form.get("status") or "",
+        assignee_code=request.form.get("assignee_code") or "",
+        comment=request.form.get("comment") or "",
+    )
+    flash("Task status updated." if ok else (err or "Could not update status."), "success" if ok else "danger")
+    return _it_internal_task_redirect()
+
+
+@app.route("/it/internal-task/due-date", methods=["POST"])
+@login_required
+def it_internal_task_due_date():
+    if not _user_can_access_it():
+        abort(403)
+    ok, err = _update_internal_it_task_due_date(
+        request.form.get("task_id") or "",
+        request.form.get("due_date") or "",
+    )
+    flash("Due date updated." if ok else (err or "Could not update due date."), "success" if ok else "danger")
+    return _it_internal_task_redirect()
+
+
+@app.route("/it/internal-task/close", methods=["POST"])
+@login_required
+def it_internal_task_close():
+    if not _user_can_access_it():
+        abort(403)
+    ok, err = _close_internal_it_task(
+        request.form.get("task_id") or "",
+        request.form.get("feedback") or "",
+    )
+    flash("Task closed." if ok else (err or "Could not close task."), "success" if ok else "danger")
+    return _it_internal_task_redirect()
+
+
+@app.route("/it/internal-task/manager-action", methods=["POST"])
+@login_required
+def it_internal_task_manager_action():
+    if not _user_can_access_it():
+        abort(403)
+    action = (request.form.get("action") or "").strip().lower()
+    ok, err = _internal_it_task_manager_action(
+        request.form.get("task_id") or "",
+        action,
+        request.form.get("feedback") or "",
+        request.form.get("due_date") or "",
+    )
+    if ok:
+        if action == "close":
+            msg = "Task closed."
+        elif action == "hold":
+            msg = "Task put on hold."
+        elif action == "delay":
+            msg = "Due date updated and task resumed to In Progress."
+        elif action == "cancel":
+            msg = "Task cancelled."
+        else:
+            msg = "Task sent back to In Progress for assignee(s)."
+        flash(msg, "success")
+    else:
+        flash(err or "Could not complete action.", "danger")
+    return _it_internal_task_redirect()
+
+
+@app.route("/it/internal-task/reopen", methods=["POST"])
+@login_required
+def it_internal_task_reopen():
+    if not _user_can_access_it():
+        abort(403)
+    ok, err = _reopen_internal_it_task(
+        request.form.get("task_id") or "",
+        request.form.get("due_date") or "",
+        request.form.get("task_description") or "",
+    )
+    flash("Task reopened." if ok else (err or "Could not reopen task."), "success" if ok else "danger")
+    return _it_internal_task_redirect()
+
+
+@app.route("/it/internal-task/comment", methods=["POST"])
+@login_required
+def it_internal_task_comment():
+    if not _user_can_access_it():
+        abort(403)
+    ok, err = _add_internal_it_task_comment(
+        request.form.get("task_id") or "",
+        request.form.get("comment") or "",
+    )
+    flash("Comment added." if ok else (err or "Could not add comment."), "success" if ok else "danger")
+    return _it_internal_task_redirect()
+
+
+@app.route("/it/internal-task/documents", methods=["POST"])
+@login_required
+def it_internal_task_documents():
+    if not _user_can_access_it():
+        abort(403)
+    ok, err = _append_internal_it_task_documents(request.form.get("task_id") or "")
+    flash("Documents uploaded." if ok else (err or "Could not upload documents."), "success" if ok else "danger")
+    return _it_internal_task_redirect()
+
+
+@app.route("/it/internal-task/document/delete", methods=["POST"])
+@login_required
+def it_internal_task_document_delete():
+    if not _user_can_access_it():
+        abort(403)
+    ok, err = _delete_internal_it_task_document(
+        request.form.get("task_id") or "",
+        request.form.get("document_path") or "",
+    )
+    flash("Document deleted." if ok else (err or "Could not delete document."), "success" if ok else "danger")
+    return _it_internal_task_redirect()
+
+
+@app.route("/it/internal-task/delete", methods=["POST"])
+@login_required
+def it_internal_task_delete():
+    if not _user_can_access_it():
+        abort(403)
+    ok, err = _delete_internal_it_task(request.form.get("task_id") or "")
+    flash("Task deleted." if ok else (err or "Could not delete task."), "success" if ok else "danger")
+    return _it_internal_task_redirect()
 
 
 @app.route("/it/api/engineers", methods=["GET"])
@@ -7186,6 +9348,38 @@ def _delete_firestore_request(request_id: str) -> tuple[bool, str | None]:
         return False, "Request not found"
     ref.delete()
     return True, None
+
+
+@app.route("/security/api/portal-approve", methods=["POST"])
+@login_required
+def security_portal_approve():
+    if not _user_is_admin():
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    request_id = (payload.get("request_id") or "").strip()
+    step = (payload.get("step") or "").strip().lower()
+    if not request_id or step not in ("jmd", "md"):
+        return jsonify({"ok": False, "error": "Invalid request."}), 400
+    db, err = _get_firestore_client()
+    if err:
+        return jsonify({"ok": False, "error": err}), 500
+    try:
+        import portal_approval
+
+        ok, msg = portal_approval.admin_approve(db, request_id, step)
+    except Exception as e:
+        app.logger.exception("Portal admin approve failed request_id=%s step=%s", request_id, step)
+        return jsonify({"ok": False, "error": _firestore_user_message(e)}), 500
+    if not ok:
+        return jsonify({"ok": False, "error": msg or "Approval failed."}), 400
+    _cache_store.clear()
+    app.logger.info(
+        "Portal admin %s approve request_id=%s by=%s",
+        step,
+        request_id,
+        getattr(current_user, "email", ""),
+    )
+    return jsonify({"ok": True})
 
 
 @app.route("/security/api/od-gate", methods=["POST"])

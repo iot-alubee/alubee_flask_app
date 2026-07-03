@@ -1,0 +1,147 @@
+{% if internal_it_tasks %}
+{% for row in internal_it_tasks %}
+<tr>
+	<td class="cell">{{ row.request_id }}</td>
+	<td class="cell">
+		{% if row.task_type == 'Joined' %}
+		{% for a in row.assignees %}
+		<div>{{ a.name|sentence_case }}</div>
+		{% endfor %}
+		{% else %}
+		{{ row.assignee_name|sentence_case }}
+		{% endif %}
+	</td>
+	<td class="cell">{{ row.task_type }}</td>
+	<td class="cell">{{ row.task_for }}</td>
+	<td class="cell">{{ row.category }}</td>
+	<td class="cell">{{ row.priority }}</td>
+	<td class="cell cell-date{% if row.due_state == 'overdue' %} text-danger fw-semibold{% elif row.due_state == 'today' %} text-primary fw-semibold{% endif %}">{{ row.due_date_label }}</td>
+	<td class="cell">
+		{% if row.task_type == 'Joined' %}
+		{% for a in row.assignees %}
+		<div class="mb-1">
+			<span class="small text-muted">{{ a.name|sentence_case }}:</span>
+			<span class="badge {% if a.status == 'Completed' %}text-bg-primary{% elif a.status == 'Cancelled' %}text-bg-danger{% elif a.status == 'Hold' %}text-bg-warning{% elif a.status == 'Delay' %}text-bg-delay{% elif a.status == 'In Progress' %}text-bg-info{% else %}text-bg-secondary{% endif %}">{{ a.status }}</span>
+		</div>
+		{% endfor %}
+		{% else %}
+		<span class="badge {% if row.assignee_status == 'Completed' %}text-bg-primary{% elif row.assignee_status == 'Cancelled' %}text-bg-danger{% elif row.assignee_status == 'Hold' %}text-bg-warning{% elif row.assignee_status == 'Delay' %}text-bg-delay{% elif row.assignee_status == 'In Progress' %}text-bg-info{% else %}text-bg-secondary{% endif %}">{{ row.assignee_status }}</span>
+		{% endif %}
+		{% if row.is_cancelled %}
+		<div class="small text-muted mt-1">Cancelled</div>
+		{% elif row.is_done %}
+		<div class="small text-muted mt-1">Closed</div>
+		{% endif %}
+	</td>
+	<td class="cell cell-actions">
+		<div class="dropdown internal-it-task-actions-dropdown">
+			<button
+				type="button"
+				class="btn btn-sm btn-link text-secondary p-0 dropdown-toggle no-toggle-arrow"
+				id="internal-task-manager-actions-{{ row.request_id }}"
+				data-bs-toggle="dropdown"
+				data-bs-popper-config='{"strategy":"fixed"}'
+				aria-expanded="false"
+				title="Actions"
+				aria-label="Task actions"
+			>
+				<svg width="1.1em" height="1.1em" viewBox="0 0 16 16" class="bi bi-three-dots-vertical" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+					<path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0m0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0m0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/>
+				</svg>
+			</button>
+			<ul class="dropdown-menu dropdown-menu-end" aria-labelledby="internal-task-manager-actions-{{ row.request_id }}">
+				{% if row.manager_actions %}
+				<li>
+					<button
+						type="button"
+						class="dropdown-item internal-task-manager-change-status-btn"
+						data-bs-toggle="modal"
+						data-bs-target="#internalTaskManagerActionModal"
+						data-task-id="{{ row.request_id }}"
+						data-manager-actions='{{ row.manager_actions | tojson }}'
+						data-due-date="{{ row.due_date if row.due_date != '—' else '' }}"
+					>Change Status</button>
+				</li>
+				<li><hr class="dropdown-divider"></li>
+				{% elif row.is_done and not row.is_cancelled %}
+				<li>
+					<button
+						type="button"
+						class="dropdown-item internal-task-reopen-btn"
+						data-bs-toggle="modal"
+						data-bs-target="#internalTaskReopenModal"
+						data-task-id="{{ row.request_id }}"
+						data-due-date="{{ row.due_date if row.due_date != '—' else '' }}"
+						data-description="{{ row.description | e }}"
+					>Reopen</button>
+				</li>
+				<li><hr class="dropdown-divider"></li>
+				{% endif %}
+				<li>
+					<button
+						type="button"
+						class="dropdown-item internal-task-desc-btn"
+						data-bs-toggle="modal"
+						data-bs-target="#internalTaskDescriptionModal"
+						data-task-id="{{ row.request_id }}"
+						data-description="{{ row.description | e }}"
+					>Description</button>
+				</li>
+				<li>
+					<button
+						type="button"
+						class="dropdown-item internal-task-user-comment-btn"
+						data-bs-toggle="modal"
+						data-bs-target="#internalTaskUserCommentsModal"
+						data-task-id="{{ row.request_id }}"
+						data-comments="{{ row.user_comments_text | e }}"
+					>User Comments{% if row.user_comments_count %} ({{ row.user_comments_count }}){% endif %}</button>
+				</li>
+				<li>
+					<button
+						type="button"
+						class="dropdown-item internal-task-documents-btn"
+						data-bs-toggle="modal"
+						data-bs-target="#internalTaskDocumentsModal"
+						data-task-id="{{ row.request_id }}"
+						data-return-tab="{{ return_tab }}"
+						data-can-edit="0"
+						data-documents='{{ row.documents | tojson }}'
+					>Documents{% if row.documents_count %} ({{ row.documents_count }}){% endif %}</button>
+				</li>
+				<li>
+					<button
+						type="button"
+						class="dropdown-item internal-task-status-history-btn"
+						data-bs-toggle="modal"
+						data-bs-target="#internalTaskStatusHistoryModal"
+						data-task-id="{{ row.request_id }}"
+						data-timeline='{{ row.status_timeline | tojson }}'
+						data-history="{{ row.status_timeline_text | e }}"
+					>Task History</button>
+				</li>
+				<li><hr class="dropdown-divider"></li>
+				<li>
+					<form
+						method="post"
+						action="{{ url_for('it_internal_task_delete') }}"
+						onsubmit="return window.confirm('Delete this task permanently? This cannot be undone.');"
+					>
+						<input type="hidden" name="task_id" value="{{ row.request_id }}">
+						<input type="hidden" name="return_tab" value="{{ return_tab }}">
+						<input type="hidden" name="filter_assignee_code" value="{{ internal_it_task_filters.assignee_code }}">
+						<input type="hidden" name="filter_due_period" value="{{ internal_it_task_filters.due_period }}">
+						<input type="hidden" name="filter_task_status" value="{{ internal_it_task_filters.status_filter }}">
+						<button type="submit" class="dropdown-item text-danger">Delete Task</button>
+					</form>
+				</li>
+			</ul>
+		</div>
+	</td>
+</tr>
+{% endfor %}
+{% else %}
+<tr>
+	<td colspan="9" class="cell text-center text-muted py-5">{{ empty_message }}</td>
+</tr>
+{% endif %}

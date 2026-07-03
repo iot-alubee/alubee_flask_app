@@ -1,0 +1,58 @@
+{% set current_status = internal_it_task_filters.status_filter or '' %}
+{% set current_due_period = internal_it_task_filters.due_period or '' %}
+{% set toolbar_due_period = current_due_period if current_due_period and current_due_period != 'overdue' else '' %}
+{% set stats = internal_it_task_stats|default({'total': 0, 'overdue': 0, 'in_progress': 0, 'hold': 0, 'completed': 0, 'closed': 0}) %}
+<div class="internal-it-stat-cards">
+	{% set total_query = {'tab': status_cards_tab} %}
+	{% if status_cards_tab == 'internal-task-assigner' and internal_it_task_filters.assignee_code %}
+	{% set _ = total_query.update({'assignee_code': internal_it_task_filters.assignee_code}) %}
+	{% endif %}
+	<a
+		href="{{ url_for(section_endpoint, **total_query) }}"
+		class="internal-it-stat-card internal-it-stat-tone-total{% if not current_status and not current_due_period %} internal-it-stat-card-active{% endif %}"
+	>
+		<div class="internal-it-stat-card-body">
+			<div class="internal-it-stat-label">Total tasks</div>
+			<div class="internal-it-stat-value">{{ stats.total }}</div>
+		</div>
+	</a>
+
+	{% set overdue_query = {'tab': status_cards_tab, 'due_period': 'overdue'} %}
+	{% if status_cards_tab == 'internal-task-assigner' and internal_it_task_filters.assignee_code %}
+	{% set _ = overdue_query.update({'assignee_code': internal_it_task_filters.assignee_code}) %}
+	{% endif %}
+	<a
+		href="{{ url_for(section_endpoint, **overdue_query) }}"
+		class="internal-it-stat-card internal-it-stat-tone-overdue{% if current_due_period == 'overdue' %} internal-it-stat-card-active{% endif %}"
+	>
+		<div class="internal-it-stat-card-body">
+			<div class="internal-it-stat-label">Overdue</div>
+			<div class="internal-it-stat-value">{{ stats.overdue }}</div>
+		</div>
+	</a>
+
+	{% set status_cards = [
+		('in_progress', 'In Progress', stats.in_progress, 'progress'),
+		('hold', 'Hold', stats.hold, 'hold'),
+		('completed', 'Completed', stats.completed, 'completed'),
+		('closed', 'Closed', stats.closed, 'closed'),
+	] %}
+	{% for status_key, label, count, tone in status_cards %}
+	{% set status_query = {'tab': status_cards_tab, 'task_status': status_key} %}
+	{% if status_cards_tab == 'internal-task-assigner' and internal_it_task_filters.assignee_code %}
+	{% set _ = status_query.update({'assignee_code': internal_it_task_filters.assignee_code}) %}
+	{% endif %}
+	{% if toolbar_due_period %}
+	{% set _ = status_query.update({'due_period': toolbar_due_period}) %}
+	{% endif %}
+	<a
+		href="{{ url_for(section_endpoint, **status_query) }}"
+		class="internal-it-stat-card internal-it-stat-tone-{{ tone }}{% if current_status == status_key and current_due_period != 'overdue' %} internal-it-stat-card-active{% endif %}"
+	>
+		<div class="internal-it-stat-card-body">
+			<div class="internal-it-stat-label">{{ label }}</div>
+			<div class="internal-it-stat-value">{{ count }}</div>
+		</div>
+	</a>
+	{% endfor %}
+</div>

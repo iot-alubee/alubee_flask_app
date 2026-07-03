@@ -107,28 +107,28 @@
 	}
 </style>
 <div class="app-content pt-3 p-md-3 p-lg-4">
-	<div class="container-xl">
+  <div class="container-xl">
 		<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
 			{% if ppc_tabs|length > 1 %}
 			<ul class="nav nav-tabs mb-0" id="ppcTabs" role="tablist">
 				{% for tab_key, tab_label in ppc_tabs %}
-				<li class="nav-item" role="presentation">
+      <li class="nav-item" role="presentation">
 					<a
 						class="nav-link {% if selected_tab == tab_key %}active{% endif %}"
 						href="{% if tab_key == 'maintenance' or selected_tab == 'maintenance' %}{{ url_for('logistics', tab=tab_key, date=selected_date_iso, unit=selected_unit) }}{% else %}{{ url_for('logistics', tab=tab_key, date=selected_date_iso) }}{% endif %}"
 						role="tab"
 						aria-selected="{% if selected_tab == tab_key %}true{% else %}false{% endif %}"
 					>{{ tab_label }}</a>
-				</li>
+      </li>
 				{% endfor %}
-			</ul>
+    </ul>
 			{% endif %}
 		</div>
 
 		{% if firestore_error %}
 		<div class="alert alert-warning mb-3" role="alert">
 			<strong>Could not load requests.</strong> {{ firestore_error }}
-		</div>
+          </div>
 		{% endif %}
 
 		{% if selected_tab == 'logistics' %}
@@ -140,25 +140,25 @@
 						<div>
 							<label for="logistics-date" class="form-label small mb-1">Date (IST)</label>
 							<input id="logistics-date" type="date" name="date" class="form-control form-control-sm" value="{{ selected_date_iso }}">
-						</div>
+        </div>
 						<div class="pb-1">
 							<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="logistics-refresh-today">Today</button>
-						</div>
-					</div>
+                </div>
+                </div>
 					<div class="d-flex gap-2 align-items-center ms-auto">
 						<button type="button" class="btn btn-sm btn-outline-primary px-3" id="logistics-export-btn" data-bs-toggle="modal" data-bs-target="#logisticsExportModal">Export</button>
 						<button type="submit" class="btn btn-sm btn-primary px-3">Refresh</button>
 						{% if can_delete_requests %}
 						<button type="button" class="btn btn-sm btn-outline-danger px-2" id="logistics-delete-btn" disabled title="Delete selected requests" aria-label="Delete selected requests">
 							<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trash" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-								<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0A.5.5 0 0 1 9 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
-								<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
-							</svg>
-						</button>
+                      <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0A.5.5 0 0 1 9 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+                      <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+                    </svg>
+                  </button>
 						{% endif %}
-					</div>
-				</form>
-			</div>
+                </div>
+              </form>
+            </div>
 
 			<div class="app-card-body p-0">
 				<div class="table-responsive logistics-scroll">
@@ -168,7 +168,7 @@
 								{% if can_delete_requests %}
 								<th class="cell-select">
 									<input type="checkbox" class="form-check-input" id="logistics-select-all" title="Select all" aria-label="Select all requests">
-								</th>
+                    </th>
 								{% endif %}
 								<th>Employee</th>
 								<th>From</th>
@@ -189,17 +189,17 @@
 								<th>Assigned At</th>
 								<th>Security Out</th>
 								<th>Security In</th>
-							</tr>
-						</thead>
-						<tbody>
+                  </tr>
+                </thead>
+                <tbody>
 							{% if vehicle_requests %}
 							{% for row in vehicle_requests %}
 							<tr>
 								{% if can_delete_requests %}
 								<td class="cell-select">
 									<input type="checkbox" class="form-check-input logistics-request-select" value="{{ row.request_id }}" aria-label="Select request">
-								</td>
-								{% endif %}
+                      </td>
+                  {% endif %}
 								<td>{{ row.employee_name|sentence_case }}</td>
 								<td>{{ row.from_unit_label|sentence_case }}</td>
 								<td>{{ row.request_type_label|sentence_case }}</td>
@@ -225,8 +225,8 @@
 										{% if not row.can_assign and not row.can_reassign and not row.can_cancel %}
 										<span class="text-muted small">—</span>
 										{% endif %}
-									</div>
-								</td>
+            </div>
+                      </td>
 								<td>{{ row.assigned_to|sentence_case }}</td>
 								<td>{{ row.vehicle_number|sentence_case }}</td>
 								<td class="cell-dept">{{ row.department }}</td>
@@ -237,18 +237,18 @@
 								<td>{{ row.assigned_at }}</td>
 								<td>{{ row.security_out_at }}</td>
 								<td>{{ row.security_in_at }}</td>
-							</tr>
-							{% endfor %}
-							{% else %}
-							<tr>
+                    </tr>
+                    {% endfor %}
+                  {% else %}
+                    <tr>
 								<td colspan="{% if can_delete_requests %}20{% else %}19{% endif %}" class="text-center text-muted py-5">No vehicle requests for this date.</td>
-							</tr>
-							{% endif %}
-						</tbody>
-					</table>
-				</div>
-			</div>
-		</div>
+                    </tr>
+                  {% endif %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
 		{% elif selected_tab == 'maintenance' %}
 		<div class="app-card app-card-settings logistics-card">
 			<div class="app-card-body p-3 border-bottom">
@@ -258,43 +258,43 @@
 						<div>
 							<label for="maintenance-date" class="form-label small mb-1">Date (IST)</label>
 							<input id="maintenance-date" type="date" name="date" class="form-control form-control-sm" value="{{ selected_date_iso }}">
-						</div>
+      </div>
 						<div>
 							<label for="maintenance-unit" class="form-label small mb-1">Unit</label>
 							{% if unit_filter_locked %}
 							<input type="hidden" name="unit" value="{{ selected_unit }}">
-							<input
+                        <input
 								id="maintenance-unit"
-								type="text"
+                          type="text"
 								class="form-control form-control-sm"
 								value="{% if selected_unit == 'unit-ii' %}Unit II{% else %}Unit I{% endif %}"
-								readonly
+                          readonly
 								aria-readonly="true"
 							>
-							{% else %}
+                      {% else %}
 							<select id="maintenance-unit" name="unit" class="form-select form-select-sm">
 								<option value="unit-i" {% if selected_unit == 'unit-i' %}selected{% endif %}>Unit I</option>
 								<option value="unit-ii" {% if selected_unit == 'unit-ii' %}selected{% endif %}>Unit II</option>
-							</select>
-							{% endif %}
-						</div>
+                    </select>
+                      {% endif %}
+                  </div>
 						<div class="pb-1">
 							<button type="button" class="btn btn-sm btn-outline-secondary px-3" id="maintenance-refresh-today">Today</button>
-						</div>
-					</div>
+                </div>
+              </div>
 					<div class="pb-1">
 						<button type="submit" class="btn btn-sm btn-primary px-3">Apply</button>
-					</div>
+            </div>
 					{% if can_delete_requests %}
 					<div class="pb-1 ms-auto">
 						<button type="button" class="btn btn-sm btn-outline-danger px-2" id="maintenance-delete-btn" disabled title="Delete selected requests" aria-label="Delete selected requests">
 							<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/><path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/></svg>
 						</button>
-					</div>
+          </div>
 					{% endif %}
 				</form>
-			</div>
-			<div class="app-card-body p-0">
+        </div>
+          <div class="app-card-body p-0">
 				<div class="table-responsive logistics-scroll">
 					<table class="table table-hover logistics-table mb-0">
 						<thead>
@@ -319,9 +319,9 @@
 								<th>Technician Closed</th>
 								<th>Supervisor Confirmed</th>
 								<th>Time Taken</th>
-							</tr>
-						</thead>
-						<tbody>
+                  </tr>
+                </thead>
+                <tbody>
 							{% if maintenance_requests %}
 							{% for row in maintenance_requests %}
 							<tr>
@@ -346,17 +346,17 @@
 										data-photo-url="{{ row.issue_photo_url | e }}"
 										data-photo-title="{{ (row.employee_name ~ ' — ' ~ row.machine_no_label ~ ' — ' ~ row.issue_category_label) | e }}"
 									>View</button>
-									{% else %}
+                        {% else %}
 									<span class="text-muted">—</span>
-									{% endif %}
-								</td>
+                        {% endif %}
+                      </td>
 								<td><span class="badge bg-secondary">{{ row.maintenance_status }}</span></td>
 								<td class="logistics-action-cell">
 									<div class="d-flex flex-column gap-1">
 										{% if row.can_assign %}
 										<button type="button" class="logistics-action-btn logistics-action-btn--assign maintenance-assign-btn"
 											data-request-id="{{ row.request_id }}" data-mode="assign">Assign</button>
-										{% endif %}
+                        {% endif %}
 										{% if row.can_reassign %}
 										<button type="button" class="logistics-action-btn logistics-action-btn--reassign maintenance-assign-btn"
 											data-request-id="{{ row.request_id }}" data-mode="reassign">Re Assign</button>
@@ -365,28 +365,28 @@
 										<span class="text-muted small">—</span>
 										{% endif %}
 									</div>
-								</td>
+                      </td>
 								<td>{{ row.assigned_to|sentence_case }}</td>
 								<td class="cell-date">{{ row.requested_date }} {{ row.requested_time }}</td>
 								<td>{{ row.assigned_at }}</td>
 								<td>{{ row.technician_closed_at }}</td>
 								<td>{{ row.supervisor_confirmed_at }}</td>
 								<td>{{ row.repair_duration }}</td>
-							</tr>
-							{% endfor %}
-							{% else %}
-							<tr>
+                    </tr>
+                    {% endfor %}
+                  {% else %}
+                    <tr>
 								<td colspan="{% if can_delete_requests %}16{% else %}15{% endif %}" class="text-center text-muted py-5">No maintenance requests for this date.</td>
-							</tr>
-							{% endif %}
-						</tbody>
-					</table>
-				</div>
-			</div>
-		</div>
+                    </tr>
+                  {% endif %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
 		{% endif %}
-	</div>
-</div>
+      </div>
+    </div>
 
 {% if selected_tab == 'logistics' %}
 <div class="modal fade" id="logisticsExportModal" tabindex="-1" aria-labelledby="logisticsExportModalLabel" aria-hidden="true">
@@ -412,17 +412,17 @@
 				<button type="button" class="btn btn-primary" id="logistics-export-submit">Export CSV</button>
 			</div>
 		</div>
-	</div>
+  </div>
 </div>
 
 <div class="modal fade" id="logisticsAssignModal" tabindex="-1" aria-labelledby="logisticsAssignModalLabel" aria-hidden="true">
 	<div class="modal-dialog modal-dialog-centered">
-		<div class="modal-content">
-			<div class="modal-header">
+    <div class="modal-content">
+      <div class="modal-header">
 				<h5 class="modal-title" id="logisticsAssignModalLabel">Assign vehicle</h5>
-				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-			</div>
-			<div class="modal-body">
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+        <div class="modal-body">
 				<input type="hidden" id="logistics-modal-request-id" value="">
 				<input type="hidden" id="logistics-modal-mode" value="assign">
 				<div class="mb-3">
@@ -431,62 +431,62 @@
 						<div class="form-check">
 							<input class="form-check-input" type="radio" name="logistics-vehicle-type" id="logistics-type-internal" value="in_house" checked>
 							<label class="form-check-label" for="logistics-type-internal">Internal</label>
-						</div>
+              </div>
 						<div class="form-check">
 							<input class="form-check-input" type="radio" name="logistics-vehicle-type" id="logistics-type-external" value="external_hire">
 							<label class="form-check-label" for="logistics-type-external">External</label>
-						</div>
-					</div>
+            </div>
+            </div>
 				</div>
 				<div class="mb-2">
 					<label for="logistics-assignee-select" class="form-label fw-semibold">Assignee</label>
 					<select id="logistics-assignee-select" class="form-select">
 						<option value="">Loading…</option>
-					</select>
-				</div>
+              </select>
+            </div>
 				<div class="mb-2" id="logistics-fleet-wrap" style="display: none;">
 					<label for="logistics-fleet-vehicle-select" class="form-label fw-semibold">Vehicle</label>
 					<select id="logistics-fleet-vehicle-select" class="form-select">
 						<option value="">Select vehicle</option>
-					</select>
-				</div>
+              </select>
+            </div>
 				<div class="invalid-feedback d-block" id="logistics-assign-error" style="display:none;"></div>
-			</div>
-			<div class="modal-footer">
+        </div>
+        <div class="modal-footer">
 				<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
 				<button type="button" class="btn btn-primary" id="logistics-assign-submit">Confirm</button>
-			</div>
-		</div>
-	</div>
+        </div>
+    </div>
+  </div>
 </div>
 {% endif %}
 
 {% if selected_tab == 'maintenance' %}
 <div class="modal fade" id="maintenanceAssignModal" tabindex="-1" aria-labelledby="maintenanceAssignModalLabel" aria-hidden="true">
-	<div class="modal-dialog modal-dialog-centered">
-		<div class="modal-content">
-			<div class="modal-header">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
 				<h5 class="modal-title" id="maintenanceAssignModalLabel">Assign maintenance</h5>
-				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-			</div>
-			<div class="modal-body">
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+        <div class="modal-body">
 				<input type="hidden" id="maintenance-modal-request-id" value="">
 				<input type="hidden" id="maintenance-modal-mode" value="assign">
 				<div class="mb-2">
 					<label for="maintenance-assignee-select" class="form-label fw-semibold">Technician</label>
 					<select id="maintenance-assignee-select" class="form-select">
 						<option value="">Loading…</option>
-					</select>
-				</div>
+              </select>
+            </div>
 				<div class="invalid-feedback d-block" id="maintenance-assign-error" style="display:none;"></div>
-			</div>
+          </div>
 			<div class="modal-footer">
 				<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
 				<button type="button" class="btn btn-primary" id="maintenance-assign-submit">Confirm</button>
-			</div>
-		</div>
-	</div>
-</div>
+          </div>
+          </div>
+          </div>
+            </div>
 
 <div class="modal fade" id="issuePhotoModal" tabindex="-1" aria-labelledby="issuePhotoModalLabel" aria-hidden="true">
 	<div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
@@ -494,18 +494,18 @@
 			<div class="modal-header">
 				<h5 class="modal-title" id="issuePhotoModalLabel">Issue photo</h5>
 				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-			</div>
+          </div>
 			<div class="modal-body text-center p-2">
 				<p id="issuePhotoError" class="text-danger small mb-2" style="display: none;">Could not load image. Try opening in a new tab.</p>
 				<img id="issuePhotoImg" src="" alt="Issue photo" class="img-fluid rounded border" style="max-height: 75vh; object-fit: contain; display: none;">
 				<div id="issuePhotoLoading" class="text-muted small py-4" style="display: none;">Loading…</div>
 				<a id="issuePhotoOpenTab" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-primary mt-2" style="display: none;">Open in new tab</a>
-			</div>
-			<div class="modal-footer">
+        </div>
+        <div class="modal-footer">
 				<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
-			</div>
-		</div>
-	</div>
+        </div>
+    </div>
+  </div>
 </div>
 {% endif %}
 {% endblock %}
@@ -718,8 +718,8 @@
 			var code = (assigneeSelect && assigneeSelect.value) || "";
 			if (!rid || !code) {
 				showAssignError("Please select an assignee.");
-				return;
-			}
+          return;
+        }
 			var vtype = selectedVehicleType();
 			var fleetCode = "";
 			if (vtype === "in_house") {
@@ -758,8 +758,8 @@
 				.catch(function () {
 					showAssignError("Network error.");
 					assignSubmit.disabled = false;
-				});
-		});
+      });
+    });
 	}
 
 	document.querySelectorAll(".logistics-cancel-btn").forEach(function (btn) {
@@ -956,8 +956,8 @@
 		var url = (btn.getAttribute("data-photo-url") || "").trim();
 		if (!url) return;
 		if (typeof bootstrap !== "undefined" && btn.getAttribute("data-bs-toggle") === "modal") {
-			return;
-		}
+        return;
+      }
 		e.preventDefault();
 		openPhotoModal(url, (btn.getAttribute("data-photo-title") || "").trim());
 	}, true);
@@ -1102,7 +1102,7 @@
 			deleteBtn.disabled = selectedIds().length === 0;
 		}
 
-		if (selectAll) {
+    if (selectAll) {
 			selectAll.addEventListener("change", function () {
 				var checked = selectAll.checked;
 				document.querySelectorAll(rowSelectClass).forEach(function (cb) {
@@ -1128,8 +1128,8 @@
 			var ids = selectedIds();
 			if (!ids.length) {
 				alert("Select at least one request to delete.");
-				return;
-			}
+          return;
+        }
 			var msg = ids.length === 1
 				? "Delete this request permanently? This cannot be undone."
 				: "Delete " + ids.length + " requests permanently? This cannot be undone.";
@@ -1137,7 +1137,7 @@
 			deleteBtn.disabled = true;
 			var chain = Promise.resolve();
 			var failed = null;
-			ids.forEach(function (id) {
+        ids.forEach(function (id) {
 				chain = chain.then(function () {
 					return postDeleteRequestOnce(id);
 				}).catch(function (err) {

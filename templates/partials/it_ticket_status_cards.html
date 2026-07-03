@@ -1,0 +1,47 @@
+{% set current_status = it_ticket_filters.status_filter or '' %}
+{% set stats = it_ticket_stats|default({'total': 0, 'pending': 0, 'completed': 0}) %}
+{% set cards_tab = status_cards_tab|default('it-tickets') %}
+{% set card_extra = it_ticket_card_query|default({}) %}
+{% set total_query = {'tab': cards_tab} %}
+{% if card_extra %}
+{% set _ = total_query.update(card_extra) %}
+{% endif %}
+<div class="internal-it-stat-cards internal-it-stat-cards--3">
+	<a
+		href="{{ url_for(section_endpoint, **total_query) }}"
+		class="internal-it-stat-card internal-it-stat-tone-total{% if not current_status %} internal-it-stat-card-active{% endif %}"
+	>
+		<div class="internal-it-stat-card-body">
+			<div class="internal-it-stat-label">Total tickets</div>
+			<div class="internal-it-stat-value">{{ stats.total }}</div>
+		</div>
+	</a>
+
+	{% set pending_query = {'tab': cards_tab, 'ticket_status': 'pending'} %}
+	{% if card_extra %}
+	{% set _ = pending_query.update(card_extra) %}
+	{% endif %}
+	<a
+		href="{{ url_for(section_endpoint, **pending_query) }}"
+		class="internal-it-stat-card internal-it-stat-tone-pending{% if current_status == 'pending' %} internal-it-stat-card-active{% endif %}"
+	>
+		<div class="internal-it-stat-card-body">
+			<div class="internal-it-stat-label">Pending tickets</div>
+			<div class="internal-it-stat-value">{{ stats.pending }}</div>
+		</div>
+	</a>
+
+	{% set completed_query = {'tab': cards_tab, 'ticket_status': 'completed'} %}
+	{% if card_extra %}
+	{% set _ = completed_query.update(card_extra) %}
+	{% endif %}
+	<a
+		href="{{ url_for(section_endpoint, **completed_query) }}"
+		class="internal-it-stat-card internal-it-stat-tone-completed{% if current_status == 'completed' %} internal-it-stat-card-active{% endif %}"
+	>
+		<div class="internal-it-stat-card-body">
+			<div class="internal-it-stat-label">Completed tickets</div>
+			<div class="internal-it-stat-value">{{ stats.completed }}</div>
+		</div>
+	</a>
+</div>

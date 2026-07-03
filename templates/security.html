@@ -65,7 +65,181 @@
 		min-width: 10rem;
 		max-width: 22rem;
 	}
-	/* Frozen block: Employee + Action (scroll starts after Action) */
+	.security-od-table tbody td.cell-actions,
+	.security-od-table thead th.cell-actions {
+		overflow: visible;
+		position: relative;
+		z-index: 4;
+	}
+	.security-od-table tbody td.cell-actions .dropdown-menu {
+		z-index: 1080;
+	}
+	.security-od-table tbody tr:has(td.cell-actions .dropdown-menu.show) {
+		position: relative;
+		z-index: 5;
+	}
+	.security-od-table tbody tr:has(td.cell-actions .dropdown-menu.show) > td {
+		background-color: #fff;
+	}
+	.internal-it-milestone-track {
+		display: flex;
+		align-items: flex-start;
+		overflow-x: auto;
+		padding: 0.75rem 0.25rem 0.25rem;
+		gap: 0;
+	}
+	.internal-it-milestone-step {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		min-width: 8.5rem;
+		max-width: 10rem;
+		flex: 0 0 auto;
+		text-align: center;
+		position: relative;
+	}
+	.internal-it-milestone-step:not(:last-child) .internal-it-milestone-connector {
+		display: block;
+	}
+	.internal-it-milestone-connector {
+		display: none;
+		position: absolute;
+		top: 0.55rem;
+		left: calc(50% + 0.55rem);
+		width: calc(100% - 1.1rem);
+		height: 3px;
+		background: linear-gradient(90deg, #6ea8fe 0%, #9ec5fe 100%);
+		z-index: 0;
+	}
+	.internal-it-milestone-dot-wrap {
+		position: relative;
+		z-index: 1;
+		margin-bottom: 0.5rem;
+	}
+	.internal-it-milestone-dot {
+		width: 1.1rem;
+		height: 1.1rem;
+		border-radius: 50%;
+		border: 3px solid #fff;
+		box-shadow: 0 0 0 2px #6ea8fe;
+		background: #0d6efd;
+		display: inline-block;
+	}
+	.internal-it-milestone-dot-assigned { background: #6c757d; box-shadow: 0 0 0 2px #adb5bd; }
+	.internal-it-milestone-dot-progress { background: #0dcaf0; box-shadow: 0 0 0 2px #9eeaf9; }
+	.internal-it-milestone-dot-hold { background: #ffc107; box-shadow: 0 0 0 2px #ffe69c; }
+	.internal-it-milestone-dot-delay { background: #e67e22; box-shadow: 0 0 0 2px #f5cba7; }
+	.internal-it-milestone-dot-cancelled { background: #dc3545; box-shadow: 0 0 0 2px #f1aeb5; }
+	.internal-it-milestone-dot-completed { background: #198754; box-shadow: 0 0 0 2px #a3cfbb; }
+	.internal-it-milestone-dot-manager { background: #6610f2; box-shadow: 0 0 0 2px #c29ffa; }
+	.text-bg-delay { background-color: #e67e22 !important; color: #fff; }
+	.internal-it-stat-cards {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.625rem;
+		width: 100%;
+		min-width: 0;
+		margin-top: 0.75rem;
+		padding-top: 0.75rem;
+		border-top: 1px solid #e9ecef;
+	}
+	@media (min-width: 768px) {
+		.internal-it-stat-cards {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+	}
+	@media (min-width: 992px) {
+		.internal-it-stat-cards {
+			grid-template-columns: repeat(6, minmax(0, 1fr));
+			gap: 0.75rem;
+		}
+	}
+	.internal-it-stat-cards .internal-it-stat-card {
+		display: block;
+		min-width: 0;
+		width: 100%;
+		text-decoration: none;
+		background: #fff;
+		border-radius: 0.5rem;
+		border: 2px solid #e9ecef;
+		box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+		transition: box-shadow 0.15s ease, border-color 0.15s ease;
+	}
+	.internal-it-stat-cards .internal-it-stat-card:hover {
+		box-shadow: 0 0.25rem 0.75rem rgba(15, 23, 42, 0.08);
+	}
+	.internal-it-stat-cards .internal-it-stat-card-active {
+		box-shadow: 0 0.25rem 0.75rem rgba(15, 23, 42, 0.1);
+	}
+	.internal-it-stat-card-body {
+		padding: 0.55rem 0.75rem;
+	}
+	.internal-it-stat-label {
+		font-size: 0.72rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+		color: #6c757d;
+		line-height: 1.25;
+		white-space: normal;
+	}
+	.internal-it-stat-value {
+		font-size: 1.35rem;
+		font-weight: 700;
+		line-height: 1.2;
+		margin-top: 0.15rem;
+	}
+	.internal-it-stat-tone-total.internal-it-stat-card-active { border-color: #6c757d; }
+	.internal-it-stat-tone-total .internal-it-stat-value { color: #495057; }
+	.internal-it-stat-tone-overdue.internal-it-stat-card-active { border-color: #dc3545; }
+	.internal-it-stat-tone-overdue .internal-it-stat-value { color: #dc3545; }
+	.internal-it-stat-tone-progress.internal-it-stat-card-active { border-color: #0dcaf0; }
+	.internal-it-stat-tone-progress .internal-it-stat-value { color: #0aa2c0; }
+	.internal-it-stat-tone-hold.internal-it-stat-card-active { border-color: #ffc107; }
+	.internal-it-stat-tone-hold .internal-it-stat-value { color: #cc9a06; }
+	.internal-it-stat-tone-completed.internal-it-stat-card-active { border-color: #0d6efd; }
+	.internal-it-stat-tone-completed .internal-it-stat-value { color: #0d6efd; }
+	.internal-it-stat-tone-closed.internal-it-stat-card-active { border-color: #198754; }
+	.internal-it-stat-tone-closed .internal-it-stat-value { color: #198754; }
+	.internal-it-stat-cards.internal-it-stat-cards--3 {
+		grid-template-columns: repeat(1, minmax(0, 1fr));
+	}
+	@media (min-width: 768px) {
+		.internal-it-stat-cards.internal-it-stat-cards--3 {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+	}
+	.internal-it-stat-tone-pending.internal-it-stat-card-active { border-color: #ffc107; }
+	.internal-it-stat-tone-pending .internal-it-stat-value { color: #cc9a06; }
+	.internal-it-milestone-label {
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: #212529;
+		line-height: 1.25;
+		margin-bottom: 0.2rem;
+		white-space: normal;
+	}
+	.internal-it-milestone-date,
+	.internal-it-milestone-who {
+		font-size: 0.72rem;
+		color: #6c757d;
+		line-height: 1.25;
+	}
+	.internal-it-milestone-dot-pending {
+		background: #fff !important;
+		box-shadow: 0 0 0 2px #ced4da !important;
+		border-style: dashed;
+	}
+	.internal-it-milestone-step-pending .internal-it-milestone-label,
+	.internal-it-milestone-step-pending .internal-it-milestone-date,
+	.internal-it-milestone-step-pending .internal-it-milestone-who {
+		color: #adb5bd;
+	}
+	.internal-it-history-assignee + .internal-it-history-assignee {
+		margin-top: 1.25rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid #e9ecef;
+	}
 	.security-od-table thead th.cell-freeze-emp,
 	.security-od-table tbody td.cell-freeze-emp {
 		position: sticky;
@@ -310,9 +484,12 @@
 								<th scope="col">Department</th>
 								<th scope="col" class="cell-visiting">Visiting To</th>
 								<th scope="col">Company Vehicle</th>
-								<th scope="col">JMD Approval</th>
-								<th scope="col">MD Approval</th>
-								<th scope="col" class="cell-date">Out time</th>
+							<th scope="col">JMD Approval</th>
+							<th scope="col">MD Approval</th>
+							{% if is_admin %}
+							<th scope="col" class="cell-freeze-action">Admin</th>
+							{% endif %}
+							<th scope="col" class="cell-date">Out time</th>
 								<th scope="col" class="cell-date">In time</th>
 								<th scope="col" class="cell-date">ODO-OUT</th>
 								<th scope="col" class="cell-date">ODO-IN</th>
@@ -346,6 +523,9 @@
 								<td class="cell">{{ row.company_vehicle or '—' }}</td>
 								<td class="cell {{ row.jmd_status|approval_cell_class }}">{% if row.jmd_status in ('Auto Approve',) %}{{ row.jmd_status }}{% else %}{{ row.jmd_status|sentence_case }}{% endif %}</td>
 								<td class="cell {{ row.md_status|approval_cell_class }}">{% if row.md_status in ('Offline', 'Auto Approve') %}{{ row.md_status }}{% else %}{{ row.md_status|sentence_case }}{% endif %}</td>
+								{% if is_admin %}
+								<td class="cell cell-freeze-action">{% include 'partials/portal_admin_approve_buttons.html' %}</td>
+								{% endif %}
 								<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
 								<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
 								<td class="cell cell-date">{{ row.odo_out or '—' }}</td>
@@ -355,7 +535,7 @@
 							{% endfor %}
 							{% else %}
 							<tr>
-								<td colspan="{% if can_delete_requests %}14{% else %}13{% endif %}" class="cell text-center text-muted py-5">No OD requests for this date.</td>
+								<td colspan="{% if can_delete_requests %}{% if is_admin %}15{% else %}14{% endif %}{% else %}{% if is_admin %}14{% else %}13{% endif %}{% endif %}" class="cell text-center text-muted py-5">No OD requests for this date.</td>
 							</tr>
 							{% endif %}
 						</tbody>
@@ -429,6 +609,9 @@
 								<th scope="col">Guest WhatsApp</th>
 								<th scope="col">JMD Approval</th>
 								<th scope="col">MD Approval</th>
+								{% if is_admin %}
+								<th scope="col" class="cell-freeze-action">Admin</th>
+								{% endif %}
 								<th scope="col" class="cell-date">In time</th>
 								<th scope="col" class="cell-date">Out time</th>
 							</tr>
@@ -466,13 +649,16 @@
 								<td class="cell">{{ row.guest_phone or '—' }}</td>
 								<td class="cell {{ row.jmd_status|approval_cell_class }}">{{ row.jmd_status }}</td>
 								<td class="cell {{ row.md_status|approval_cell_class }}">{{ row.md_status }}</td>
+								{% if is_admin %}
+								<td class="cell cell-freeze-action">{% include 'partials/portal_admin_approve_buttons.html' %}</td>
+								{% endif %}
 								<td class="cell cell-date">{{ row.security_in_at or '—' }}</td>
 								<td class="cell cell-date">{{ row.security_out_at or '—' }}</td>
 							</tr>
 							{% endfor %}
 							{% else %}
 							<tr>
-								<td colspan="{% if can_delete_requests %}15{% else %}14{% endif %}" class="cell text-center text-muted py-5">No visitor requests for this date.</td>
+								<td colspan="{% if can_delete_requests %}{% if is_admin %}16{% else %}15{% endif %}{% else %}{% if is_admin %}15{% else %}14{% endif %}{% endif %}" class="cell text-center text-muted py-5">No visitor requests for this date.</td>
 							</tr>
 							{% endif %}
 						</tbody>
@@ -545,6 +731,9 @@
 							<th scope="col" class="cell-date">To Date</th>
 							<th scope="col">JMD Approval</th>
 							<th scope="col">MD Approval</th>
+							{% if is_admin %}
+							<th scope="col" class="cell-freeze-action">Admin</th>
+							{% endif %}
 						</tr>
 					</thead>
 					<tbody>
@@ -566,11 +755,14 @@
 							<td class="cell cell-date">{{ row.leave_to_date or '—' }}</td>
 							<td class="cell {{ row.jmd_status|approval_cell_class }}">{% if row.jmd_status in ('Auto Approve',) %}{{ row.jmd_status }}{% else %}{{ row.jmd_status|sentence_case }}{% endif %}</td>
 							<td class="cell {{ row.md_status|approval_cell_class }}">{% if row.md_status in ('Offline', 'Auto Approve') %}{{ row.md_status }}{% else %}{{ row.md_status|sentence_case }}{% endif %}</td>
+							{% if is_admin %}
+							<td class="cell cell-freeze-action">{% include 'partials/portal_admin_approve_buttons.html' %}</td>
+							{% endif %}
 						</tr>
 						{% endfor %}
 						{% else %}
 						<tr>
-							<td colspan="{% if can_delete_requests %}11{% else %}10{% endif %}" class="cell text-center text-muted py-5">No leave requests for this date.</td>
+							<td colspan="{% if can_delete_requests %}{% if is_admin %}12{% else %}11{% endif %}{% else %}{% if is_admin %}11{% else %}10{% endif %}{% endif %}" class="cell text-center text-muted py-5">No leave requests for this date.</td>
 						</tr>
 						{% endif %}
 					</tbody>
@@ -585,6 +777,7 @@
 		<div class="app-card-body p-3 security-od-toolbar">
 			<form method="get" action="{{ url_for(section_endpoint) }}" class="d-flex flex-wrap align-items-end gap-3">
 				<input type="hidden" name="tab" value="it-request">
+				<input type="hidden" name="ticket_status" value="{{ it_ticket_filters.status_filter }}">
 				<div>
 					<label for="security-it-date" class="form-label small mb-1">Date (IST)</label>
 					<input id="security-it-date" type="date" name="date" class="form-control form-control-sm" value="{{ selected_date_iso }}">
@@ -621,6 +814,9 @@
 					{% endif %}
 				</div>
 			</form>
+			{% with status_cards_tab='it-request', it_ticket_card_query={'date': selected_date_iso, 'unit': selected_unit} %}
+			{% include 'partials/it_ticket_status_cards.html' %}
+			{% endwith %}
 		</div>
 
 		<div class="app-card-body p-0 p-md-0">
@@ -712,6 +908,165 @@
 							<td colspan="{% if can_delete_requests %}{% if section_endpoint == 'it' %}16{% else %}15{% endif %}{% else %}{% if section_endpoint == 'it' %}15{% else %}14{% endif %}{% endif %}" class="cell text-center text-muted py-5">No IT requests for this date.</td>
 						</tr>
 						{% endif %}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+	{% endif %}
+
+	{% if selected_tab == 'it-tickets' %}
+	<div class="app-card app-card-settings security-od-card">
+		<div class="app-card-body p-3 security-od-toolbar">
+			<div class="d-flex flex-wrap align-items-end justify-content-between gap-3">
+				<a class="btn btn-sm btn-outline-secondary px-3" href="{{ url_for(section_endpoint, tab='it-tickets') }}">Refresh</a>
+			</div>
+			{% include 'partials/it_ticket_status_cards.html' %}
+		</div>
+
+		<div class="app-card-body p-0 p-md-0">
+			<div class="table-responsive security-od-scroll">
+				<table class="table table-hover security-od-table mb-0">
+					<thead class="table-light">
+						<tr>
+							<th scope="col" class="cell-freeze-emp">Employee ID</th>
+							<th scope="col">Employee</th>
+							<th scope="col">Department</th>
+							<th scope="col" class="cell-date">Requested Date</th>
+							<th scope="col" class="cell-date">Requested Time</th>
+							<th scope="col">Category</th>
+							<th scope="col">Issue Type</th>
+							<th scope="col" class="cell-visiting">Description</th>
+							<th scope="col">Photo</th>
+							<th scope="col">Priority</th>
+							<th scope="col">Status</th>
+							<th scope="col">Assigned Engineer</th>
+							<th scope="col" class="cell-date">Assigned At</th>
+							<th scope="col" class="cell-date">Engineer Closed At</th>
+							<th scope="col" class="cell-date">User Closed At</th>
+						</tr>
+					</thead>
+					<tbody>
+						{% with empty_message=('Your login is not linked to an engineer profile.' if not active_it_slot else 'No assigned IT tickets match the selected filters.') %}
+						{% include 'partials/it_engineer_tickets_table_body.html' %}
+						{% endwith %}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+	{% endif %}
+
+	{% if selected_tab == 'internal-task-assigner' %}
+	<div class="app-card app-card-settings security-od-card">
+		<div class="app-card-body p-3 security-od-toolbar">
+			<div class="d-flex flex-wrap align-items-end justify-content-between gap-3">
+				<form method="get" action="{{ url_for(section_endpoint) }}" class="d-flex flex-wrap align-items-end gap-3">
+					<input type="hidden" name="tab" value="internal-task-assigner">
+					<input type="hidden" name="task_status" value="{{ internal_it_task_filters.status_filter }}">
+					<div>
+						<label for="manager-task-assignee-filter" class="form-label small mb-1">Assignee</label>
+						<select id="manager-task-assignee-filter" name="assignee_code" class="form-select form-select-sm">
+							<option value="">All</option>
+							{% for opt in internal_it_task_assignees %}
+							<option value="{{ opt.code }}" {% if internal_it_task_filters.assignee_code == opt.code|string %}selected{% endif %}>{{ opt.label|sentence_case }}</option>
+							{% endfor %}
+						</select>
+					</div>
+					<div>
+						<label for="manager-task-due-period-filter" class="form-label small mb-1">Due Date</label>
+						<select id="manager-task-due-period-filter" name="due_period" class="form-select form-select-sm">
+							<option value="" {% if not internal_it_task_filters.due_period or internal_it_task_filters.due_period == 'overdue' %}selected{% endif %}>All</option>
+							{% for period_key, period_label in internal_it_task_due_period_options %}
+							<option value="{{ period_key }}" {% if internal_it_task_filters.due_period == period_key %}selected{% endif %}>{{ period_label }}</option>
+							{% endfor %}
+						</select>
+					</div>
+					<div class="d-flex gap-2 align-items-center">
+						<button type="submit" class="btn btn-sm btn-primary px-3">Apply</button>
+						<a class="btn btn-sm btn-outline-secondary px-3" href="{{ url_for(section_endpoint, tab='internal-task-assigner') }}">Refresh</a>
+					</div>
+				</form>
+				<button type="button" class="btn btn-sm btn-primary px-3" data-bs-toggle="modal" data-bs-target="#internalItTaskModal">Add Task</button>
+			</div>
+			{% with status_cards_tab='internal-task-assigner' %}
+			{% include 'partials/internal_it_task_status_cards.html' %}
+			{% endwith %}
+		</div>
+
+		<div class="app-card-body p-0 p-md-0">
+			<div class="table-responsive security-od-scroll">
+				<table class="table table-hover security-od-table mb-0">
+					<thead class="table-light">
+						<tr>
+							<th scope="col">Task ID</th>
+							<th scope="col">Assignee</th>
+							<th scope="col">Type</th>
+							<th scope="col">Task For</th>
+							<th scope="col">Task Category</th>
+							<th scope="col">Priority</th>
+							<th scope="col" class="cell-date">Due Date</th>
+							<th scope="col">Status</th>
+							<th scope="col" class="cell-actions">Action</th>
+						</tr>
+					</thead>
+					<tbody>
+						{% with return_tab='internal-task-assigner', empty_message='No internal IT tasks yet.' %}
+						{% include 'partials/internal_it_task_manager_table_body.html' %}
+						{% endwith %}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</div>
+	{% endif %}
+
+	{% if selected_tab == 'internal-tasks' %}
+	<div class="app-card app-card-settings security-od-card">
+		<div class="app-card-body p-3 security-od-toolbar">
+			<div class="d-flex flex-wrap align-items-end justify-content-between gap-3">
+				<form method="get" action="{{ url_for(section_endpoint) }}" class="d-flex flex-wrap align-items-end gap-3">
+					<input type="hidden" name="tab" value="internal-tasks">
+					<input type="hidden" name="task_status" value="{{ internal_it_task_filters.status_filter }}">
+					<div>
+						<label for="internal-task-due-period-filter" class="form-label small mb-1">Due Date</label>
+						<select id="internal-task-due-period-filter" name="due_period" class="form-select form-select-sm">
+							<option value="" {% if not internal_it_task_filters.due_period or internal_it_task_filters.due_period == 'overdue' %}selected{% endif %}>All</option>
+							{% for period_key, period_label in internal_it_task_due_period_options %}
+							<option value="{{ period_key }}" {% if internal_it_task_filters.due_period == period_key %}selected{% endif %}>{{ period_label }}</option>
+							{% endfor %}
+						</select>
+					</div>
+					<div class="d-flex gap-2 align-items-center">
+						<button type="submit" class="btn btn-sm btn-primary px-3">Apply</button>
+						<a class="btn btn-sm btn-outline-secondary px-3" href="{{ url_for(section_endpoint, tab='internal-tasks') }}">Refresh</a>
+					</div>
+				</form>
+			</div>
+			{% with status_cards_tab='internal-tasks' %}
+			{% include 'partials/internal_it_task_status_cards.html' %}
+			{% endwith %}
+		</div>
+
+		<div class="app-card-body p-0 p-md-0">
+			<div class="table-responsive security-od-scroll">
+				<table class="table table-hover security-od-table mb-0">
+					<thead class="table-light">
+						<tr>
+							<th scope="col">Task ID</th>
+							<th scope="col" class="cell-date">Due Date</th>
+							<th scope="col">Assignee</th>
+							<th scope="col">Type</th>
+							<th scope="col">Task For</th>
+							<th scope="col">Category</th>
+							<th scope="col">My Status</th>
+							<th scope="col" class="cell-actions">Action</th>
+						</tr>
+					</thead>
+					<tbody>
+						{% with return_tab='internal-tasks', empty_message=('Your login is not linked to an engineer profile.' if not active_it_slot else 'No internal IT tasks match the selected filters.') %}
+						{% include 'partials/internal_it_task_user_table_body.html' %}
+						{% endwith %}
 					</tbody>
 				</table>
 			</div>
@@ -1186,6 +1541,334 @@
 				</div>
 			</div>
 		</div>
+
+		<div class="modal fade" id="internalItTaskModal" tabindex="-1" aria-labelledby="internalItTaskModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+				<div class="modal-content">
+					<form method="post" action="{{ url_for('it_internal_task_create') }}">
+						<div class="modal-header">
+							<h5 class="modal-title" id="internalItTaskModalLabel">Add Internal IT Task</h5>
+							<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+						</div>
+						<div class="modal-body">
+							<div class="row g-3">
+								<div class="col-md-6">
+									<label class="form-label fw-semibold">Task ID</label>
+									<input type="text" class="form-control" value="Auto generated" readonly aria-readonly="true">
+								</div>
+								<div class="col-md-6">
+									<label class="form-label fw-semibold">Task Type</label>
+									<div class="d-flex gap-3 pt-1">
+										{% for task_type in internal_it_task_types %}
+										<div class="form-check">
+											<input class="form-check-input internal-it-task-type-radio" type="radio" name="task_type" id="internal-it-task-type-{{ task_type|lower }}" value="{{ task_type }}" {% if task_type == 'Individual' %}checked{% endif %} required>
+											<label class="form-check-label" for="internal-it-task-type-{{ task_type|lower }}">{{ task_type }}</label>
+										</div>
+										{% endfor %}
+									</div>
+								</div>
+								<div class="col-md-6" id="internal-it-assignee-single-wrap">
+									<label for="internal-it-assignee" class="form-label fw-semibold">Assignee</label>
+									<select id="internal-it-assignee" name="assignee_code" class="form-select">
+										<option value="">Select assignee</option>
+										{% for opt in internal_it_task_assignees %}
+										<option value="{{ opt.code }}">{{ opt.label|sentence_case }}</option>
+										{% endfor %}
+									</select>
+								</div>
+								<div class="col-md-6 d-none" id="internal-it-assignee-multi-wrap">
+									<label for="internal-it-assignees" class="form-label fw-semibold">Assignees</label>
+									<select id="internal-it-assignees" name="assignee_codes" class="form-select" multiple size="5">
+										{% for opt in internal_it_task_assignees %}
+										<option value="{{ opt.code }}">{{ opt.label|sentence_case }}</option>
+										{% endfor %}
+									</select>
+									<div class="form-text">Select two or more engineers for a joined task.</div>
+								</div>
+								<div class="col-md-6">
+									<label for="internal-it-task-for" class="form-label fw-semibold">Task For</label>
+									<select id="internal-it-task-for" name="task_for" class="form-select" required>
+										<option value="">Select schedule</option>
+										{% for task_for in internal_it_task_for_options %}
+										<option value="{{ task_for }}"{% if task_for == 'One time' %} selected{% endif %}>{{ task_for }}</option>
+										{% endfor %}
+									</select>
+								</div>
+								<div class="col-md-6">
+									<label for="internal-it-category" class="form-label fw-semibold">Task Category</label>
+									<select id="internal-it-category" name="task_category" class="form-select" required>
+										<option value="">Select category</option>
+										{% for category in internal_it_task_categories %}
+										<option value="{{ category }}">{{ category }}</option>
+										{% endfor %}
+									</select>
+								</div>
+								<div class="col-md-6">
+									<label for="internal-it-priority" class="form-label fw-semibold">Priority</label>
+									<select id="internal-it-priority" name="priority" class="form-select" required>
+										<option value="">Select priority</option>
+										{% for priority in internal_it_task_priorities %}
+										<option value="{{ priority }}">{{ priority }}</option>
+										{% endfor %}
+									</select>
+								</div>
+								<div class="col-md-6">
+									<label for="internal-it-due-date" class="form-label fw-semibold">Due Date</label>
+									<input id="internal-it-due-date" type="date" name="due_date" class="form-control" required>
+								</div>
+								<div class="col-12">
+									<label for="internal-it-description" class="form-label fw-semibold">Task Description</label>
+									<textarea id="internal-it-description" name="task_description" class="form-control" rows="4" required></textarea>
+								</div>
+							</div>
+						</div>
+						<div class="modal-footer">
+							<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+							<button type="submit" class="btn btn-primary">Create Task</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="internalTaskDescriptionModal" tabindex="-1" aria-labelledby="internalTaskDescriptionModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title" id="internalTaskDescriptionModalLabel">Task Description</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body">
+						<div class="small text-muted mb-2" id="internal-task-desc-id">Task</div>
+						<div id="internal-task-desc-body" style="white-space: pre-wrap;">—</div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="internalTaskManagerActionModal" tabindex="-1" aria-labelledby="internalTaskManagerActionModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+				<div class="modal-content">
+					<form method="post" action="{{ url_for('it_internal_task_manager_action') }}" id="internal-task-manager-action-form">
+						<div class="modal-header">
+							<h5 class="modal-title" id="internalTaskManagerActionModalLabel">Change Status</h5>
+							<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+						</div>
+						<div class="modal-body">
+							<input type="hidden" name="task_id" id="internal-task-manager-action-id" value="">
+							<input type="hidden" name="return_tab" id="internal-task-manager-action-return-tab" value="internal-task-assigner">
+							<input type="hidden" name="filter_assignee_code" value="{{ internal_it_task_filters.assignee_code }}">
+							<input type="hidden" name="filter_due_period" value="{{ internal_it_task_filters.due_period }}">
+							<input type="hidden" name="filter_task_status" value="{{ internal_it_task_filters.status_filter }}">
+							<div class="small text-muted mb-2" id="internal-task-manager-action-task-id">Task</div>
+							<div id="internal-task-manager-action-choices" class="mb-3">
+								<label class="form-label fw-semibold">Select status action</label>
+								<div id="internal-task-manager-action-options"></div>
+							</div>
+							<div class="alert alert-light border py-2 mb-3" id="internal-task-manager-action-hint">Add feedback before completing this action.</div>
+							<div id="internal-task-manager-action-due-date-wrap" class="d-none mb-3">
+								<label for="internal-task-manager-action-due-date" class="form-label fw-semibold">New Due Date</label>
+								<input type="date" name="due_date" id="internal-task-manager-action-due-date" class="form-control">
+							</div>
+							<label for="internal-task-manager-action-feedback" class="form-label fw-semibold">Feedback</label>
+							<textarea id="internal-task-manager-action-feedback" name="feedback" class="form-control" rows="4" required></textarea>
+						</div>
+						<div class="modal-footer">
+							<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+							<button type="submit" class="btn btn-primary" id="internal-task-manager-action-submit">Update Status</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="internalTaskCommentModal" tabindex="-1" aria-labelledby="internalTaskCommentModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+				<div class="modal-content">
+					<form method="post" action="{{ url_for('it_internal_task_comment') }}" id="internal-task-comment-form">
+						<div class="modal-header">
+							<h5 class="modal-title" id="internalTaskCommentModalLabel">Comments</h5>
+							<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+						</div>
+						<div class="modal-body">
+							<input type="hidden" name="task_id" id="internal-task-comment-id" value="">
+							<input type="hidden" name="return_tab" id="internal-task-comment-return-tab" value="internal-task-assigner">
+							<input type="hidden" name="filter_assignee_code" id="internal-task-comment-filter-assignee" value="{{ internal_it_task_filters.assignee_code }}">
+							<input type="hidden" name="filter_due_period" id="internal-task-comment-filter-due-period" value="{{ internal_it_task_filters.due_period }}">
+							<input type="hidden" name="filter_task_status" id="internal-task-comment-filter-status" value="{{ internal_it_task_filters.status_filter }}">
+							<div class="small text-muted mb-2" id="internal-task-comment-task-id">Task</div>
+							<div class="small text-muted mb-2">All comments</div>
+							<div id="internal-task-comment-history" class="border rounded p-2 mb-3 bg-light" style="white-space: pre-wrap; min-height: 80px;">No comments yet.</div>
+							<div id="internal-task-comment-add-wrap">
+								<label for="internal-task-comment-input" class="form-label fw-semibold">Add Comment</label>
+								<textarea id="internal-task-comment-input" name="comment" class="form-control" rows="4"></textarea>
+							</div>
+						</div>
+						<div class="modal-footer">
+							<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+							<button type="submit" class="btn btn-primary" id="internal-task-comment-submit">Save Comment</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="internalTaskDocumentsModal" tabindex="-1" aria-labelledby="internalTaskDocumentsModalLabel" aria-hidden="true"
+			data-upload-url="{{ url_for('it_internal_task_documents') }}"
+			data-delete-url="{{ url_for('it_internal_task_document_delete') }}">
+			<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title" id="internalTaskDocumentsModalLabel">Documents</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body">
+						<div class="small text-muted mb-2" id="internal-task-documents-task-id">Task</div>
+						<div id="internal-task-documents-list" class="mb-3">No documents uploaded yet.</div>
+						<form method="post" action="{{ url_for('it_internal_task_documents') }}" enctype="multipart/form-data" id="internal-task-documents-upload-form">
+							<input type="hidden" name="task_id" id="internal-task-documents-upload-id" value="">
+							<input type="hidden" name="return_tab" id="internal-task-documents-return-tab" value="internal-tasks">
+							<input type="hidden" name="filter_assignee_code" id="internal-task-documents-filter-assignee" value="{{ internal_it_task_filters.assignee_code }}">
+							<input type="hidden" name="filter_due_period" id="internal-task-documents-filter-due-period" value="{{ internal_it_task_filters.due_period }}">
+							<input type="hidden" name="filter_task_status" id="internal-task-documents-filter-status" value="{{ internal_it_task_filters.status_filter }}">
+							<label for="internal-task-documents-files" class="form-label fw-semibold">Upload Documents</label>
+							<input id="internal-task-documents-files" type="file" name="documents" class="form-control" multiple>
+							<div class="form-text">You can upload any number of files.</div>
+							<button type="submit" class="btn btn-primary btn-sm mt-3">Upload</button>
+						</form>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="internalTaskChangeStatusModal" tabindex="-1" aria-labelledby="internalTaskChangeStatusModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered">
+				<div class="modal-content">
+					<form method="post" action="{{ url_for('it_internal_task_status') }}" id="internal-task-change-status-form">
+						<div class="modal-header">
+							<h5 class="modal-title" id="internalTaskChangeStatusModalLabel">Change Status</h5>
+							<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+						</div>
+						<div class="modal-body">
+							<input type="hidden" name="task_id" id="internal-task-change-status-id" value="">
+							<input type="hidden" name="return_tab" id="internal-task-change-status-return-tab" value="internal-tasks">
+							<input type="hidden" name="assignee_code" id="internal-task-change-status-assignee" value="">
+							<input type="hidden" name="filter_due_period" value="{{ internal_it_task_filters.due_period }}">
+							<input type="hidden" name="filter_task_status" value="{{ internal_it_task_filters.status_filter }}">
+							<div class="small text-muted mb-2" id="internal-task-change-status-task-id">Task</div>
+							<div class="mb-3">
+								<span class="text-muted small">Current status:</span>
+								<span class="fw-semibold" id="internal-task-change-status-current">—</span>
+							</div>
+							<label class="form-label fw-semibold">Select new status</label>
+							<div id="internal-task-change-status-options" class="d-flex flex-column gap-2"></div>
+							<div id="internal-task-change-status-comment-wrap" class="d-none mt-3">
+								<label for="internal-task-change-status-comment" class="form-label fw-semibold">Comment</label>
+								<textarea id="internal-task-change-status-comment" name="comment" class="form-control" rows="3" placeholder="Explain why this task is delayed"></textarea>
+							</div>
+						</div>
+						<div class="modal-footer">
+							<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+							<button type="submit" class="btn btn-primary" id="internal-task-change-status-submit">Update Status</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="internalTaskStatusHistoryModal" tabindex="-1" aria-labelledby="internalTaskStatusHistoryModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title" id="internalTaskStatusHistoryModalLabel">Task History</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body">
+						<div class="small text-muted mb-3" id="internal-task-status-history-id">Task</div>
+						<div id="internal-task-status-history-body">No status changes yet.</div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="internalTaskDueDateModal" tabindex="-1" aria-labelledby="internalTaskDueDateModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered">
+				<div class="modal-content">
+					<form method="post" action="{{ url_for('it_internal_task_due_date') }}">
+						<div class="modal-header">
+							<h5 class="modal-title" id="internalTaskDueDateModalLabel">Change Due Date</h5>
+							<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+						</div>
+						<div class="modal-body">
+							<input type="hidden" name="task_id" id="internal-task-due-date-id" value="">
+							<input type="hidden" name="return_tab" value="internal-task-assigner">
+							<label for="internal-task-due-date-input" class="form-label fw-semibold">New Due Date</label>
+							<input id="internal-task-due-date-input" type="date" name="due_date" class="form-control" required>
+						</div>
+						<div class="modal-footer">
+							<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+							<button type="submit" class="btn btn-primary">Save Due Date</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="internalTaskUserCommentsModal" tabindex="-1" aria-labelledby="internalTaskUserCommentsModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title" id="internalTaskUserCommentsModalLabel">User Comments</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body">
+						<div class="small text-muted mb-2" id="internal-task-user-comments-id">Task</div>
+						<div id="internal-task-user-comments-body" class="border rounded p-2 bg-light" style="white-space: pre-wrap; min-height: 80px;">No user comments yet.</div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="modal fade" id="internalTaskReopenModal" tabindex="-1" aria-labelledby="internalTaskReopenModalLabel" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+				<div class="modal-content">
+					<form method="post" action="{{ url_for('it_internal_task_reopen') }}">
+						<div class="modal-header">
+							<h5 class="modal-title" id="internalTaskReopenModalLabel">Reopen Task</h5>
+							<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+						</div>
+						<div class="modal-body">
+							<input type="hidden" name="task_id" id="internal-task-reopen-id" value="">
+							<input type="hidden" name="return_tab" id="internal-task-reopen-return-tab" value="{{ selected_tab }}">
+							<input type="hidden" name="filter_assignee_code" value="{{ internal_it_task_filters.assignee_code }}">
+							<input type="hidden" name="filter_due_period" value="{{ internal_it_task_filters.due_period }}">
+							<input type="hidden" name="filter_task_status" value="{{ internal_it_task_filters.status_filter }}">
+							<p class="text-muted small mb-3">Provide updated task details. Previous due dates and descriptions are kept in history.</p>
+							<label for="internal-task-reopen-description" class="form-label fw-semibold">New Description</label>
+							<textarea id="internal-task-reopen-description" name="task_description" class="form-control mb-3" rows="4" required></textarea>
+							<label for="internal-task-reopen-due-date" class="form-label fw-semibold">New Due Date</label>
+							<input id="internal-task-reopen-due-date" type="date" name="due_date" class="form-control" required>
+						</div>
+						<div class="modal-footer">
+							<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+							<button type="submit" class="btn btn-warning">Reopen Task</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		</div>
 		{% endif %}
 
 		<div class="modal fade" id="itIssuePhotoModal" tabindex="-1" aria-labelledby="itIssuePhotoModalLabel" aria-hidden="true">
@@ -1252,6 +1935,546 @@
 			window.location.href = itTodayUrl;
 		});
 	}
+	var internalTaskDescModalEl = document.getElementById("internalTaskDescriptionModal");
+	var internalTaskDescId = document.getElementById("internal-task-desc-id");
+	var internalTaskDescBody = document.getElementById("internal-task-desc-body");
+	if (internalTaskDescModalEl) {
+		internalTaskDescModalEl.addEventListener("show.bs.modal", function (event) {
+			var trigger = event.relatedTarget;
+			if (!trigger) return;
+			if (internalTaskDescId) {
+				internalTaskDescId.textContent = (trigger.getAttribute("data-task-id") || "Task").trim();
+			}
+			if (internalTaskDescBody) {
+				internalTaskDescBody.textContent = (trigger.getAttribute("data-description") || "—").trim() || "—";
+			}
+		});
+	}
+	var internalTaskStatusHistoryModalEl = document.getElementById("internalTaskStatusHistoryModal");
+	var internalTaskStatusHistoryId = document.getElementById("internal-task-status-history-id");
+	var internalTaskStatusHistoryBody = document.getElementById("internal-task-status-history-body");
+	function internalItMilestoneDotClass(status, isManager) {
+		if (isManager) return "internal-it-milestone-dot-manager";
+		var normalized = String(status || "").trim();
+		if (normalized === "Assigned") return "internal-it-milestone-dot-assigned";
+		if (normalized === "In Progress") return "internal-it-milestone-dot-progress";
+		if (normalized === "Hold") return "internal-it-milestone-dot-hold";
+		if (normalized === "Delay") return "internal-it-milestone-dot-delay";
+		if (normalized === "Cancelled") return "internal-it-milestone-dot-cancelled";
+		if (normalized === "Completed") return "internal-it-milestone-dot-completed";
+		return "";
+	}
+	function escapeHtmlHistory(value) {
+		return String(value || "")
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+			.replace(/"/g, "&quot;");
+	}
+	function renderInternalTaskStatusTimeline(timeline) {
+		if (!timeline || !timeline.length) {
+			return '<div class="text-muted small">No status changes yet.</div>';
+		}
+		return timeline.map(function (assigneeBlock) {
+			var milestones = assigneeBlock.milestones || [];
+			if (!milestones.length) return "";
+			var steps = milestones.map(function (milestone, index) {
+				var stamp = ((milestone.changed_at || "—") + " " + (milestone.changed_time || "")).trim();
+				var isPending = !!milestone.pending;
+				var dotClass = internalItMilestoneDotClass(milestone.status, milestone.is_manager);
+				if (isPending) {
+					dotClass += " internal-it-milestone-dot-pending";
+				}
+				var stepClass = "internal-it-milestone-step" + (isPending ? " internal-it-milestone-step-pending" : "");
+				var who = isPending ? "Pending" : (milestone.changed_by_display || "—");
+				var dateLabel = isPending ? "—" : stamp;
+				return '<div class="' + stepClass + '">' +
+					(index < milestones.length - 1 ? '<span class="internal-it-milestone-connector" aria-hidden="true"></span>' : "") +
+					'<div class="internal-it-milestone-dot-wrap"><span class="internal-it-milestone-dot ' + dotClass + '" aria-hidden="true"></span></div>' +
+					'<div class="internal-it-milestone-label">' + escapeHtmlHistory(milestone.display_label || milestone.status || "—") + '</div>' +
+					'<div class="internal-it-milestone-date">' + escapeHtmlHistory(dateLabel) + '</div>' +
+					'<div class="internal-it-milestone-who">' + escapeHtmlHistory(who) + '</div>' +
+					'</div>';
+			}).join("");
+			return '<div class="internal-it-history-assignee">' +
+				'<div class="fw-semibold mb-2">' + escapeHtmlHistory(assigneeBlock.name || "Assignee") + '</div>' +
+				'<div class="internal-it-milestone-track">' + steps + '</div>' +
+				'</div>';
+		}).join("");
+	}
+	if (internalTaskStatusHistoryModalEl) {
+		internalTaskStatusHistoryModalEl.addEventListener("show.bs.modal", function (event) {
+			var trigger = event.relatedTarget;
+			if (!trigger) return;
+			if (internalTaskStatusHistoryId) {
+				internalTaskStatusHistoryId.textContent = (trigger.getAttribute("data-task-id") || "Task").trim();
+			}
+			if (!internalTaskStatusHistoryBody) return;
+			var timeline = [];
+			try {
+				timeline = JSON.parse(trigger.getAttribute("data-timeline") || "[]");
+			} catch (err) {
+				timeline = [];
+			}
+			if (!timeline.length) {
+				var fallback = (trigger.getAttribute("data-history") || "").trim();
+				internalTaskStatusHistoryBody.innerHTML = fallback
+					? '<div class="border rounded p-2 bg-light" style="white-space: pre-wrap;">' + escapeHtmlHistory(fallback) + '</div>'
+					: '<div class="text-muted small">No status changes yet.</div>';
+				return;
+			}
+			internalTaskStatusHistoryBody.innerHTML = renderInternalTaskStatusTimeline(timeline);
+		});
+	}
+	var internalTaskChangeStatusModalEl = document.getElementById("internalTaskChangeStatusModal");
+	var internalTaskChangeStatusForm = document.getElementById("internal-task-change-status-form");
+	var internalTaskChangeStatusId = document.getElementById("internal-task-change-status-id");
+	var internalTaskChangeStatusReturnTab = document.getElementById("internal-task-change-status-return-tab");
+	var internalTaskChangeStatusAssignee = document.getElementById("internal-task-change-status-assignee");
+	var internalTaskChangeStatusTaskId = document.getElementById("internal-task-change-status-task-id");
+	var internalTaskChangeStatusCurrent = document.getElementById("internal-task-change-status-current");
+	var internalTaskChangeStatusOptions = document.getElementById("internal-task-change-status-options");
+	var internalTaskChangeStatusCommentWrap = document.getElementById("internal-task-change-status-comment-wrap");
+	var internalTaskChangeStatusComment = document.getElementById("internal-task-change-status-comment");
+	function syncInternalTaskChangeStatusComment() {
+		if (!internalTaskChangeStatusOptions || !internalTaskChangeStatusCommentWrap) return;
+		var selected = internalTaskChangeStatusOptions.querySelector('input[name="status"]:checked');
+		var isDelay = selected && selected.value === "Delay";
+		internalTaskChangeStatusCommentWrap.classList.toggle("d-none", !isDelay);
+		if (internalTaskChangeStatusComment) {
+			internalTaskChangeStatusComment.required = isDelay;
+			if (!isDelay) {
+				internalTaskChangeStatusComment.value = "";
+			}
+		}
+	}
+	if (internalTaskChangeStatusModalEl) {
+		internalTaskChangeStatusModalEl.addEventListener("show.bs.modal", function (event) {
+			var trigger = event.relatedTarget;
+			if (!trigger) return;
+			var taskId = (trigger.getAttribute("data-task-id") || "").trim();
+			var currentStatus = (trigger.getAttribute("data-current-status") || "—").trim();
+			var nextStatuses = [];
+			try {
+				nextStatuses = JSON.parse(trigger.getAttribute("data-next-statuses") || "[]");
+			} catch (err) {
+				nextStatuses = [];
+			}
+			if (internalTaskChangeStatusId) {
+				internalTaskChangeStatusId.value = taskId;
+			}
+			if (internalTaskChangeStatusReturnTab) {
+				internalTaskChangeStatusReturnTab.value = (trigger.getAttribute("data-return-tab") || "internal-tasks").trim();
+			}
+			if (internalTaskChangeStatusAssignee) {
+				internalTaskChangeStatusAssignee.value = (trigger.getAttribute("data-assignee-code") || "").trim();
+			}
+			if (internalTaskChangeStatusTaskId) {
+				internalTaskChangeStatusTaskId.textContent = taskId ? ("Task " + taskId) : "Task";
+			}
+			if (internalTaskChangeStatusCurrent) {
+				internalTaskChangeStatusCurrent.textContent = currentStatus || "—";
+			}
+			if (!internalTaskChangeStatusOptions) return;
+			if (!nextStatuses.length) {
+				internalTaskChangeStatusOptions.innerHTML = '<div class="text-muted small">No status changes available.</div>';
+				return;
+			}
+			internalTaskChangeStatusOptions.innerHTML = nextStatuses.map(function (status, index) {
+				var inputId = "internal-task-change-status-" + taskId + "-" + index;
+				return '<div class="form-check">' +
+					'<input class="form-check-input internal-task-change-status-radio" type="radio" name="status" id="' + inputId + '" value="' + status + '"' + (index === 0 ? ' checked' : '') + ' required>' +
+					'<label class="form-check-label" for="' + inputId + '">' + status + '</label>' +
+					'</div>';
+			}).join("");
+			internalTaskChangeStatusOptions.querySelectorAll(".internal-task-change-status-radio").forEach(function (radio) {
+				radio.addEventListener("change", syncInternalTaskChangeStatusComment);
+			});
+			if (internalTaskChangeStatusComment) {
+				internalTaskChangeStatusComment.value = "";
+			}
+			syncInternalTaskChangeStatusComment();
+		});
+	}
+	if (internalTaskChangeStatusForm) {
+		internalTaskChangeStatusForm.addEventListener("submit", function (event) {
+			if (!internalTaskChangeStatusOptions) return;
+			var selected = internalTaskChangeStatusOptions.querySelector('input[name="status"]:checked');
+			if (!selected) {
+				event.preventDefault();
+				window.alert("Please select a status.");
+				return;
+			}
+			if (selected.value === "Delay" && internalTaskChangeStatusComment && !(internalTaskChangeStatusComment.value || "").trim()) {
+				event.preventDefault();
+				window.alert("Comment is required when marking a task as Delay.");
+			}
+		});
+	}
+	var internalTaskManagerActionModalEl = document.getElementById("internalTaskManagerActionModal");
+	var internalTaskManagerActionForm = document.getElementById("internal-task-manager-action-form");
+	var internalTaskManagerActionId = document.getElementById("internal-task-manager-action-id");
+	var internalTaskManagerActionTaskId = document.getElementById("internal-task-manager-action-task-id");
+	var internalTaskManagerActionOptions = document.getElementById("internal-task-manager-action-options");
+	var internalTaskManagerActionHint = document.getElementById("internal-task-manager-action-hint");
+	var internalTaskManagerActionFeedback = document.getElementById("internal-task-manager-action-feedback");
+	var internalTaskManagerActionDueDateWrap = document.getElementById("internal-task-manager-action-due-date-wrap");
+	var internalTaskManagerActionDueDate = document.getElementById("internal-task-manager-action-due-date");
+	var internalTaskManagerActionSubmit = document.getElementById("internal-task-manager-action-submit");
+	var internalTaskManagerActionLabels = {
+		close: "Close — mark task as done",
+		continue: "Continue — send back to In Progress",
+		hold: "Hold — pause task until you continue",
+		delay: "Delay — update due date and resume In Progress",
+		cancel: "Cancel — stop this task permanently"
+	};
+	function syncInternalTaskManagerActionHint(action) {
+		var selected = action || "close";
+		if (internalTaskManagerActionHint) {
+			if (selected === "close") {
+				internalTaskManagerActionHint.textContent = "Add feedback, then this task will be closed.";
+			} else if (selected === "hold") {
+				internalTaskManagerActionHint.textContent = "Add feedback, then the task will be put on hold for assignee(s).";
+			} else if (selected === "delay") {
+				internalTaskManagerActionHint.textContent = "Set a new due date and add feedback, then delayed assignee(s) will return to In Progress.";
+			} else if (selected === "cancel") {
+				internalTaskManagerActionHint.textContent = "Add feedback, then this task will be cancelled for all assignee(s).";
+			} else {
+				internalTaskManagerActionHint.textContent = "Add feedback, then the task will go back to In Progress for assignee(s).";
+			}
+		}
+		if (internalTaskManagerActionDueDateWrap) {
+			var showDueDate = selected === "delay";
+			internalTaskManagerActionDueDateWrap.classList.toggle("d-none", !showDueDate);
+			if (internalTaskManagerActionDueDate) {
+				internalTaskManagerActionDueDate.required = showDueDate;
+			}
+		}
+		if (internalTaskManagerActionSubmit) {
+			if (selected === "close") {
+				internalTaskManagerActionSubmit.textContent = "Close Task";
+				internalTaskManagerActionSubmit.className = "btn btn-success";
+			} else if (selected === "hold") {
+				internalTaskManagerActionSubmit.textContent = "Put On Hold";
+				internalTaskManagerActionSubmit.className = "btn btn-warning";
+			} else if (selected === "delay") {
+				internalTaskManagerActionSubmit.textContent = "Update Due Date";
+				internalTaskManagerActionSubmit.className = "btn btn-primary";
+			} else if (selected === "cancel") {
+				internalTaskManagerActionSubmit.textContent = "Cancel Task";
+				internalTaskManagerActionSubmit.className = "btn btn-danger";
+			} else {
+				internalTaskManagerActionSubmit.textContent = "Continue Task";
+				internalTaskManagerActionSubmit.className = "btn btn-primary";
+			}
+		}
+	}
+	if (internalTaskManagerActionModalEl) {
+		internalTaskManagerActionModalEl.addEventListener("show.bs.modal", function (event) {
+			var trigger = event.relatedTarget;
+			if (!trigger) return;
+			var taskId = (trigger.getAttribute("data-task-id") || "").trim();
+			var actions = [];
+			try {
+				actions = JSON.parse(trigger.getAttribute("data-manager-actions") || "[]");
+			} catch (err) {
+				actions = [];
+			}
+			if (internalTaskManagerActionId) {
+				internalTaskManagerActionId.value = taskId;
+			}
+			if (internalTaskManagerActionTaskId) {
+				internalTaskManagerActionTaskId.textContent = taskId ? ("Task " + taskId) : "Task";
+			}
+			if (internalTaskManagerActionFeedback) {
+				internalTaskManagerActionFeedback.value = "";
+			}
+			if (internalTaskManagerActionDueDate) {
+				internalTaskManagerActionDueDate.value = (trigger.getAttribute("data-due-date") || "").trim();
+			}
+			if (internalTaskManagerActionOptions) {
+				if (!actions.length) {
+					internalTaskManagerActionOptions.innerHTML = '<div class="text-muted small">No status changes available.</div>';
+				} else {
+					internalTaskManagerActionOptions.innerHTML = actions.map(function (action, index) {
+						var inputId = "internal-task-manager-action-" + action + "-" + taskId;
+						return '<div class="form-check">' +
+							'<input class="form-check-input internal-task-manager-action-radio" type="radio" name="action" id="' + inputId + '" value="' + action + '"' + (index === 0 ? ' checked' : '') + ' required>' +
+							'<label class="form-check-label" for="' + inputId + '">' + (internalTaskManagerActionLabels[action] || action) + '</label>' +
+							'</div>';
+					}).join("");
+					internalTaskManagerActionOptions.querySelectorAll(".internal-task-manager-action-radio").forEach(function (radio) {
+						radio.addEventListener("change", function () {
+							syncInternalTaskManagerActionHint(radio.value);
+						});
+					});
+				}
+			}
+			syncInternalTaskManagerActionHint(actions[0] || "close");
+		});
+	}
+	if (internalTaskManagerActionForm) {
+		internalTaskManagerActionForm.addEventListener("submit", function (event) {
+			var selected = internalTaskManagerActionForm.querySelector('input[name="action"]:checked');
+			if (!selected) {
+				event.preventDefault();
+				window.alert("Please select an action.");
+				return;
+			}
+			if (internalTaskManagerActionFeedback && !(internalTaskManagerActionFeedback.value || "").trim()) {
+				event.preventDefault();
+				window.alert("Feedback is required.");
+				return;
+			}
+			if (selected.value === "delay" && internalTaskManagerActionDueDate && !(internalTaskManagerActionDueDate.value || "").trim()) {
+				event.preventDefault();
+				window.alert("Due date is required.");
+			}
+		});
+	}
+	var internalTaskCommentModalEl = document.getElementById("internalTaskCommentModal");
+	var internalTaskCommentForm = document.getElementById("internal-task-comment-form");
+	var internalTaskCommentId = document.getElementById("internal-task-comment-id");
+	var internalTaskCommentTaskId = document.getElementById("internal-task-comment-task-id");
+	var internalTaskCommentReturnTab = document.getElementById("internal-task-comment-return-tab");
+	var internalTaskCommentHistory = document.getElementById("internal-task-comment-history");
+	var internalTaskCommentInput = document.getElementById("internal-task-comment-input");
+	var internalTaskCommentAddWrap = document.getElementById("internal-task-comment-add-wrap");
+	var internalTaskCommentSubmit = document.getElementById("internal-task-comment-submit");
+	if (internalTaskCommentModalEl) {
+		internalTaskCommentModalEl.addEventListener("show.bs.modal", function (event) {
+			var trigger = event.relatedTarget;
+			if (!trigger) return;
+			var taskId = (trigger.getAttribute("data-task-id") || "").trim();
+			var readOnly = (trigger.getAttribute("data-read-only") || "") === "1";
+			if (internalTaskCommentId) {
+				internalTaskCommentId.value = taskId;
+			}
+			if (internalTaskCommentTaskId) {
+				internalTaskCommentTaskId.textContent = taskId ? ("Task " + taskId) : "Task";
+			}
+			if (internalTaskCommentReturnTab) {
+				internalTaskCommentReturnTab.value = (trigger.getAttribute("data-return-tab") || "internal-task-assigner").trim();
+			}
+			if (internalTaskCommentHistory) {
+				internalTaskCommentHistory.textContent = (trigger.getAttribute("data-comments") || "").trim() || "No comments yet.";
+			}
+			if (internalTaskCommentInput) {
+				internalTaskCommentInput.value = "";
+				internalTaskCommentInput.required = !readOnly;
+			}
+			if (internalTaskCommentAddWrap) {
+				internalTaskCommentAddWrap.classList.toggle("d-none", readOnly);
+			}
+			if (internalTaskCommentSubmit) {
+				internalTaskCommentSubmit.classList.toggle("d-none", readOnly);
+			}
+		});
+	}
+	var internalTaskDocumentsModalEl = document.getElementById("internalTaskDocumentsModal");
+	var internalTaskDocumentsList = document.getElementById("internal-task-documents-list");
+	var internalTaskDocumentsTaskId = document.getElementById("internal-task-documents-task-id");
+	var internalTaskDocumentsUploadForm = document.getElementById("internal-task-documents-upload-form");
+	var internalTaskDocumentsUploadId = document.getElementById("internal-task-documents-upload-id");
+	var internalTaskDocumentsReturnTab = document.getElementById("internal-task-documents-return-tab");
+	var internalTaskDocumentsFiles = document.getElementById("internal-task-documents-files");
+	if (internalTaskDocumentsModalEl) {
+		internalTaskDocumentsModalEl.addEventListener("show.bs.modal", function (event) {
+			var trigger = event.relatedTarget;
+			if (!trigger) return;
+			var taskId = (trigger.getAttribute("data-task-id") || "").trim();
+			var canEdit = (trigger.getAttribute("data-can-edit") || "") === "1";
+			var documents = [];
+			try {
+				documents = JSON.parse(trigger.getAttribute("data-documents") || "[]");
+			} catch (err) {
+				documents = [];
+			}
+			var uploadUrl = internalTaskDocumentsModalEl.getAttribute("data-upload-url") || "";
+			var deleteUrl = internalTaskDocumentsModalEl.getAttribute("data-delete-url") || "";
+			var returnTab = (trigger.getAttribute("data-return-tab") || "internal-tasks").trim();
+			var filterStatusEl = document.getElementById("internal-task-documents-filter-status");
+			var filterDuePeriodEl = document.getElementById("internal-task-documents-filter-due-period");
+			var filterStatus = filterStatusEl ? filterStatusEl.value : "";
+			var filterDuePeriod = filterDuePeriodEl ? filterDuePeriodEl.value : "";
+			if (internalTaskDocumentsTaskId) {
+				internalTaskDocumentsTaskId.textContent = taskId ? ("Task " + taskId) : "Task";
+			}
+			if (internalTaskDocumentsUploadId) {
+				internalTaskDocumentsUploadId.value = taskId;
+			}
+			if (internalTaskDocumentsReturnTab) {
+				internalTaskDocumentsReturnTab.value = returnTab;
+			}
+			if (internalTaskDocumentsUploadForm) {
+				internalTaskDocumentsUploadForm.classList.toggle("d-none", !canEdit);
+			}
+			if (internalTaskDocumentsFiles) {
+				internalTaskDocumentsFiles.value = "";
+				internalTaskDocumentsFiles.required = false;
+			}
+			if (!internalTaskDocumentsList) return;
+			function escapeHtml(value) {
+				return String(value || "")
+					.replace(/&/g, "&amp;")
+					.replace(/</g, "&lt;")
+					.replace(/>/g, "&gt;")
+					.replace(/"/g, "&quot;");
+			}
+			if (!documents.length) {
+				internalTaskDocumentsList.innerHTML = '<div class="text-muted small">No documents uploaded yet.</div>';
+				return;
+			}
+			internalTaskDocumentsList.innerHTML = documents.map(function (doc) {
+				var name = escapeHtml((doc && doc.name) || "Document");
+				var url = escapeHtml((doc && doc.url) || "#");
+				var path = escapeHtml((doc && doc.path) || "");
+				var uploadedAt = escapeHtml((doc && doc.uploaded_at) || "—");
+				var uploadedTime = escapeHtml((doc && doc.uploaded_time) || "");
+				var uploadedBy = escapeHtml((doc && doc.uploaded_by) || "—");
+				var stamp = (uploadedAt + " " + uploadedTime).trim();
+				var deleteBtn = "";
+				if (canEdit && doc && doc.path) {
+					deleteBtn = '<form method="post" action="' + deleteUrl + '" class="d-inline" onsubmit="return window.confirm(\'Delete this document?\');">' +
+						'<input type="hidden" name="task_id" value="' + escapeHtml(taskId) + '">' +
+						'<input type="hidden" name="document_path" value="' + path + '">' +
+						'<input type="hidden" name="return_tab" value="' + escapeHtml(returnTab) + '">' +
+						'<input type="hidden" name="filter_due_period" value="' + escapeHtml(filterDuePeriod) + '">' +
+						'<input type="hidden" name="filter_task_status" value="' + escapeHtml(filterStatus) + '">' +
+						'<button type="submit" class="btn btn-sm btn-link text-danger p-0" title="Delete" aria-label="Delete document">&times;</button>' +
+						'</form>';
+				}
+				return '<div class="d-flex justify-content-between align-items-start border-bottom py-2">' +
+					'<div class="me-2">' +
+					'<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + name + '</a>' +
+					'<div class="small text-muted">' + stamp + (uploadedBy ? (" - " + uploadedBy) : "") + '</div>' +
+					'</div>' +
+					deleteBtn +
+					'</div>';
+			}).join("");
+		});
+		if (internalTaskDocumentsUploadForm) {
+			internalTaskDocumentsUploadForm.addEventListener("submit", function (event) {
+				if (!internalTaskDocumentsFiles || !internalTaskDocumentsFiles.files || !internalTaskDocumentsFiles.files.length) {
+					event.preventDefault();
+					window.alert("Please choose at least one file to upload.");
+				}
+			});
+		}
+	}
+	if (internalTaskCommentForm) {
+		internalTaskCommentForm.addEventListener("submit", function (event) {
+			if (internalTaskCommentAddWrap && internalTaskCommentAddWrap.classList.contains("d-none")) {
+				event.preventDefault();
+				return;
+			}
+			if (internalTaskCommentInput && !(internalTaskCommentInput.value || "").trim()) {
+				event.preventDefault();
+				window.alert("Please enter a comment.");
+			}
+		});
+	}
+	if (typeof bootstrap !== "undefined") {
+		document.querySelectorAll(".internal-it-task-actions-dropdown [data-bs-toggle='dropdown']").forEach(function (toggle) {
+			bootstrap.Dropdown.getOrCreateInstance(toggle, {
+				popperConfig: function (defaultConfig) {
+					var config = typeof defaultConfig === "function" ? defaultConfig() : (defaultConfig || {});
+					return Object.assign({}, config, {
+						strategy: "fixed",
+						modifiers: [].concat(config.modifiers || [], [{
+							name: "preventOverflow",
+							options: { boundary: "viewport", padding: 8, altAxis: true }
+						}])
+					});
+				}
+			});
+		});
+	}
+	var internalTaskReopenModalEl = document.getElementById("internalTaskReopenModal");
+	var internalTaskReopenId = document.getElementById("internal-task-reopen-id");
+	var internalTaskReopenDueDate = document.getElementById("internal-task-reopen-due-date");
+	var internalTaskReopenDescription = document.getElementById("internal-task-reopen-description");
+	var internalTaskReopenReturnTab = document.getElementById("internal-task-reopen-return-tab");
+	if (internalTaskReopenModalEl) {
+		internalTaskReopenModalEl.addEventListener("show.bs.modal", function (event) {
+			var trigger = event.relatedTarget;
+			if (!trigger) return;
+			if (internalTaskReopenId) {
+				internalTaskReopenId.value = (trigger.getAttribute("data-task-id") || "").trim();
+			}
+			if (internalTaskReopenReturnTab) {
+				internalTaskReopenReturnTab.value = {{ selected_tab | tojson }};
+			}
+			if (internalTaskReopenDueDate) {
+				internalTaskReopenDueDate.value = (trigger.getAttribute("data-due-date") || "").trim();
+			}
+			if (internalTaskReopenDescription) {
+				internalTaskReopenDescription.value = (trigger.getAttribute("data-description") || "").trim();
+			}
+		});
+	}
+	var internalTaskUserCommentsModalEl = document.getElementById("internalTaskUserCommentsModal");
+	var internalTaskUserCommentsId = document.getElementById("internal-task-user-comments-id");
+	var internalTaskUserCommentsBody = document.getElementById("internal-task-user-comments-body");
+	if (internalTaskUserCommentsModalEl) {
+		internalTaskUserCommentsModalEl.addEventListener("show.bs.modal", function (event) {
+			var trigger = event.relatedTarget;
+			if (!trigger) return;
+			if (internalTaskUserCommentsId) {
+				internalTaskUserCommentsId.textContent = (trigger.getAttribute("data-task-id") || "Task").trim();
+			}
+			if (internalTaskUserCommentsBody) {
+				internalTaskUserCommentsBody.textContent = (trigger.getAttribute("data-comments") || "").trim() || "No user comments yet.";
+			}
+		});
+	}
+	var internalTaskDueDateModalEl = document.getElementById("internalTaskDueDateModal");
+	var internalTaskDueDateId = document.getElementById("internal-task-due-date-id");
+	var internalTaskDueDateInput = document.getElementById("internal-task-due-date-input");
+	if (internalTaskDueDateModalEl) {
+		internalTaskDueDateModalEl.addEventListener("show.bs.modal", function (event) {
+			var trigger = event.relatedTarget;
+			if (!trigger) return;
+			if (internalTaskDueDateId) {
+				internalTaskDueDateId.value = (trigger.getAttribute("data-task-id") || "").trim();
+			}
+			if (internalTaskDueDateInput) {
+				internalTaskDueDateInput.value = (trigger.getAttribute("data-due-date") || "").trim();
+			}
+		});
+	}
+	var internalItTaskTypeRadios = document.querySelectorAll(".internal-it-task-type-radio");
+	var internalItAssigneeSingleWrap = document.getElementById("internal-it-assignee-single-wrap");
+	var internalItAssigneeMultiWrap = document.getElementById("internal-it-assignee-multi-wrap");
+	var internalItAssigneeSingle = document.getElementById("internal-it-assignee");
+	var internalItAssigneesMulti = document.getElementById("internal-it-assignees");
+	function syncInternalItTaskAssigneeFields() {
+		var selected = document.querySelector(".internal-it-task-type-radio:checked");
+		var taskType = selected ? selected.value : "Individual";
+		var isJoined = taskType === "Joined";
+		if (internalItAssigneeSingleWrap) {
+			internalItAssigneeSingleWrap.classList.toggle("d-none", isJoined);
+		}
+		if (internalItAssigneeMultiWrap) {
+			internalItAssigneeMultiWrap.classList.toggle("d-none", !isJoined);
+		}
+		if (internalItAssigneeSingle) {
+			internalItAssigneeSingle.required = !isJoined;
+			if (isJoined) internalItAssigneeSingle.value = "";
+		}
+		if (internalItAssigneesMulti) {
+			internalItAssigneesMulti.required = isJoined;
+			if (!isJoined) {
+				Array.prototype.forEach.call(internalItAssigneesMulti.options, function (opt) {
+					opt.selected = false;
+				});
+			}
+		}
+	}
+	internalItTaskTypeRadios.forEach(function (radio) {
+		radio.addEventListener("change", syncInternalItTaskAssigneeFields);
+	});
+	syncInternalItTaskAssigneeFields();
 	var vehicleTodayBtn = document.getElementById("security-vehicle-refresh-today");
 	if (vehicleTodayBtn) {
 		vehicleTodayBtn.addEventListener("click", function () {
@@ -2097,6 +3320,35 @@
 				});
 		});
 	}
+{% endif %}
+{% if is_admin %}
+	var portalApproveUrl = {{ url_for('security_portal_approve') | tojson }};
+	document.querySelectorAll(".portal-approve-btn").forEach(function (btn) {
+		btn.addEventListener("click", function () {
+			var requestId = (this.getAttribute("data-request-id") || "").trim();
+			var step = (this.getAttribute("data-step") || "").trim();
+			if (!requestId || !step) return;
+			var label = step === "jmd" ? "JMD" : "MD";
+			if (!confirm("Approve this request as " + label + "? WhatsApp notifications will be sent.")) return;
+			btn.disabled = true;
+			fetch(portalApproveUrl, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ request_id: requestId, step: step })
+			})
+				.then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+				.then(function (x) {
+					if (!x.ok || !x.j.ok) {
+						throw new Error((x.j && x.j.error) || "Approval failed.");
+					}
+					window.location.reload();
+				})
+				.catch(function (err) {
+					alert(err.message || "Approval failed.");
+					btn.disabled = false;
+				});
+		});
+	});
 {% endif %}
 })();
 

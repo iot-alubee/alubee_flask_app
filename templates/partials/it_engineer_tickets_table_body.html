@@ -1,0 +1,59 @@
+{% if it_engineer_tickets %}
+{% for row in it_engineer_tickets %}
+<tr>
+	<td class="cell cell-freeze-emp">{{ row.employee_id or '—' }}</td>
+	<td class="cell">{{ row.employee_name|sentence_case }}</td>
+	<td class="cell cell-dept">{{ row.department }}</td>
+	<td class="cell cell-date">{{ row.requested_datetime or '—' }}</td>
+	<td class="cell cell-date">{{ row.requested_time or '—' }}</td>
+	<td class="cell">{{ row.it_category_label|sentence_case }}</td>
+	<td class="cell">{{ row.issue_type_label|sentence_case }}</td>
+	<td class="cell cell-visiting">{{ row.description|sentence_case }}</td>
+	<td class="cell">
+		{% if row.issue_photo_url %}
+		<button
+			type="button"
+			class="btn btn-link btn-sm p-0 align-baseline it-photo-view-btn"
+			data-bs-toggle="modal"
+			data-bs-target="#itIssuePhotoModal"
+			data-photo-url="{{ row.issue_photo_url | e }}"
+			data-photo-title="{{ (row.employee_name ~ ' — ' ~ row.issue_type_label) | e }}"
+		>View</button>
+		{% else %}
+		—
+		{% endif %}
+	</td>
+	<td class="cell">{{ row.priority_label|sentence_case }}</td>
+	<td class="cell {{ row.it_status_raw|it_status_cell_class }}">{{ row.it_status }}</td>
+	<td class="cell">{{ row.assigned_engineer_name|sentence_case }}</td>
+	<td class="cell cell-date">
+		{% if row.assigned_date != '—' %}
+		<div>{{ row.assigned_date }}</div>
+		<div class="small text-muted">{{ row.assigned_datetime }}</div>
+		{% else %}
+		—
+		{% endif %}
+	</td>
+	<td class="cell cell-date">
+		{% if row.engineer_closed_date != '—' %}
+		<div>{{ row.engineer_closed_date }}</div>
+		<div class="small text-muted">{{ row.engineer_closed_time }}</div>
+		{% else %}
+		—
+		{% endif %}
+	</td>
+	<td class="cell cell-date">
+		{% if row.user_closed_date != '—' %}
+		<div>{{ row.user_closed_date }}</div>
+		<div class="small text-muted">{{ row.user_closed_time }}</div>
+		{% else %}
+		—
+		{% endif %}
+	</td>
+</tr>
+{% endfor %}
+{% else %}
+<tr>
+	<td colspan="15" class="cell text-center text-muted py-5">{{ empty_message|default('No assigned IT tickets match the selected filters.') }}</td>
+</tr>
+{% endif %}

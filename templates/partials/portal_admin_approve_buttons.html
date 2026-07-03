@@ -1,0 +1,14 @@
+{% if is_admin %}
+{% if row.can_admin_jmd_approve or row.can_admin_md_approve %}
+<div class="d-flex flex-column gap-1 portal-approve-actions">
+	{% if row.can_admin_jmd_approve %}
+	<button type="button" class="btn btn-sm btn-outline-primary portal-approve-btn" data-request-id="{{ row.request_id }}" data-step="jmd">JMD Approve</button>
+	{% endif %}
+	{% if row.can_admin_md_approve %}
+	<button type="button" class="btn btn-sm btn-outline-success portal-approve-btn" data-request-id="{{ row.request_id }}" data-step="md">MD Approve</button>
+	{% endif %}
+</div>
+{% else %}
+<span class="text-muted small">—</span>
+{% endif %}
+{% endif %}
