@@ -96,9 +96,9 @@ _DEFAULT_BUILTIN_VIEWERS = (
     (SECURITY_UNIT_II_EMAIL, "security@alubee", ("security",)),
     (HR_SECURITY_EMAIL, "hr@alubee", ("hr",)),
     (IT_EMAIL, "it@alubee", ("it",)),
-    (IT_ENGINEER_1_EMAIL, "it.1@alubee", ("it",)),
-    (IT_ENGINEER_2_EMAIL, "it.2@alubee", ("it",)),
-    (IT_ENGINEER_3_EMAIL, "it.3@alubee", ("it",)),
+    (IT_ENGINEER_1_EMAIL, "it.1@alubee", ("production", "it")),
+    (IT_ENGINEER_2_EMAIL, "it.2@alubee", ("production", "it")),
+    (IT_ENGINEER_3_EMAIL, "it.3@alubee", ("production", "it")),
     (PPC_EMAIL_1, "ppc.1@alubee", _PPC_UNIT_I_PAGES),
     (PPC_EMAIL_2, "ppc.2@alubee", _PPC_UNIT_II_PAGES),
 )
