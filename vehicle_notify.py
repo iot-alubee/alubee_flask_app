@@ -76,6 +76,11 @@ def _require_api_key() -> str:
     return key
 
 
+def _env_enabled(name: str, *, default: bool = False) -> bool:
+    raw = (os.getenv(name) or ("true" if default else "false")).strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def _headers() -> dict[str, str]:
     key = _api_key()
     if not key:
@@ -502,6 +507,13 @@ def notify_vehicle_security_gate(
     vehicle_number: str = "",
 ) -> None:
     """Notify unit JMD + MD on internal OUT or external IN (security gate)."""
+    if not _env_enabled("ENABLE_JMD_MD_VEHICLE_NOTIFY"):
+        logger.info(
+            "vehicle security gate JMD/MD notify disabled "
+            "(ENABLE_JMD_MD_VEHICLE_NOTIFY) request_id=%s",
+            rd.get("request_id") or "—",
+        )
+        return
     ev = (event or "").strip().lower()
     if ev not in ("out", "in"):
         return

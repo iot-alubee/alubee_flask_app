@@ -14,6 +14,7 @@ except ImportError:
 
 from vehicle_notify import (
     _api_key,
+    _env_enabled,
     _phone_to_10,
     _post_message,
     ensure_customer,
@@ -243,6 +244,13 @@ def _jmd_md_assign_template_body_values(rd: dict) -> list[str]:
 
 def notify_maintenance_jmd_md_assigned(rd: dict, *, request_id: str) -> None:
     """Notify unit JMD + MD when maintenance is assigned to a technician."""
+    if not _env_enabled("ENABLE_JMD_MD_MAINTENANCE_NOTIFY"):
+        logger.info(
+            "maintenance JMD/MD assign notify disabled "
+            "(ENABLE_JMD_MD_MAINTENANCE_NOTIFY) request_id=%s",
+            request_id,
+        )
+        return
     template_name = _jmd_md_assign_template_name()
     if not template_name:
         logger.warning("MAINTENANCE_JMD_MD_ASSIGN_TEMPLATE_NAME not set")
