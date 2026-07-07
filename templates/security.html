@@ -453,6 +453,29 @@
 	.security-od-table tbody tr:hover > td.cell-freeze-select {
 		background-color: #f8f9fa !important;
 	}
+	#internalItTaskModal .modal-content {
+		max-height: min(90vh, 52rem);
+		overflow: hidden;
+	}
+	#internalItTaskModal .modal-content > form {
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		max-height: min(90vh, 52rem);
+	}
+	#internalItTaskModal .modal-header,
+	#internalItTaskModal .modal-footer {
+		flex-shrink: 0;
+	}
+	#internalItTaskModal .modal-body {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+	}
+	#internalItTaskModal .modal-footer {
+		background: var(--bs-modal-bg, #fff);
+		border-top: var(--bs-modal-footer-border-width) solid var(--bs-modal-footer-border-color);
+	}
 </style>
 <div class="app-content pt-3 p-md-3 p-lg-4">
 	<div class="container-xl">
@@ -1596,9 +1619,9 @@
 		</div>
 
 		<div class="modal fade" id="internalItTaskModal" tabindex="-1" aria-labelledby="internalItTaskModalLabel" aria-hidden="true">
-			<div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+			<div class="modal-dialog modal-lg modal-dialog-centered">
 				<div class="modal-content">
-					<form method="post" action="{{ url_for('it_internal_task_create') }}">
+					<form method="post" action="{{ url_for('it_internal_task_create') }}" id="internal-it-task-create-form">
 						<div class="modal-header">
 							<h5 class="modal-title" id="internalItTaskModalLabel">Add Internal IT Task</h5>
 							<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -1631,7 +1654,7 @@
 								</div>
 								<div class="col-md-6 d-none" id="internal-it-assignee-multi-wrap">
 									<label for="internal-it-assignees" class="form-label fw-semibold">Assignees</label>
-									<select id="internal-it-assignees" name="assignee_codes" class="form-select" multiple size="5">
+									<select id="internal-it-assignees" name="assignee_codes" class="form-select" multiple size="4">
 										{% for opt in internal_it_task_assignees %}
 										<option value="{{ opt.code }}">{{ opt.label|sentence_case }}</option>
 										{% endfor %}
@@ -1686,7 +1709,7 @@
 						</div>
 						<div class="modal-footer">
 							<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-							<button type="submit" class="btn btn-primary">Create Task</button>
+							<button type="submit" class="btn btn-primary" id="internal-it-create-submit">Create Task</button>
 						</div>
 					</form>
 				</div>
@@ -2604,6 +2627,25 @@
 		radio.addEventListener("change", syncInternalItTaskAssigneeFields);
 	});
 	syncInternalItTaskAssigneeFields();
+	var internalItTaskCreateForm = document.getElementById("internal-it-task-create-form");
+	if (internalItTaskCreateForm) {
+		internalItTaskCreateForm.addEventListener("submit", function (event) {
+			var selected = document.querySelector(".internal-it-task-type-radio:checked");
+			var taskType = selected ? selected.value : "Individual";
+			if (taskType !== "Joined" || !internalItAssigneesMulti) {
+				return;
+			}
+			var picked = Array.prototype.filter.call(
+				internalItAssigneesMulti.options,
+				function (opt) { return opt.selected; }
+			);
+			if (picked.length < 2) {
+				event.preventDefault();
+				window.alert("Select at least two engineers for a joined task.");
+				internalItAssigneesMulti.focus();
+			}
+		});
+	}
 	var internalItTaskFor = document.getElementById("internal-it-task-for");
 	var internalItDueDateWrap = document.getElementById("internal-it-due-date-wrap");
 	var internalItDueDateInput = document.getElementById("internal-it-due-date");
