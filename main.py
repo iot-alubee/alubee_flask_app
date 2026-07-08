@@ -85,20 +85,27 @@ IT_ENGINEER_2_EMAIL = "it.2@alubee.com"
 IT_ENGINEER_3_EMAIL = "it.3@alubee.com"
 PPC_EMAIL_1 = "ppc.1@alubee.com"
 PPC_EMAIL_2 = "ppc.2@alubee.com"
+JMD_1_EMAIL = "jmd.1@alubee.com"
+JMD_2_EMAIL = "jmd.2@alubee.com"
 
 _PPC_UNIT_I_PAGES = ("production", "logistics", "maintenance")
 _PPC_UNIT_II_PAGES = ("production", "maintenance")
 
 # Built-in accounts (SQLite). Change passwords after deploy in production.
 _DEFAULT_ADMIN = ("admin@alubee.com", "jeevaMuthu14#")
+# Editor: all portal pages except Admin (user management, delete, portal JMD/MD bypass).
+_DEFAULT_BUILTIN_EDITORS = (
+    (JMD_1_EMAIL, "jmd.1@alubee"),
+    (JMD_2_EMAIL, "jmd.2@alubee"),
+    (IT_ENGINEER_1_EMAIL, "it.1@alubee"),
+    (IT_ENGINEER_2_EMAIL, "it.2@alubee"),
+    (IT_ENGINEER_3_EMAIL, "it.3@alubee"),
+)
 _DEFAULT_BUILTIN_VIEWERS = (
     (SECURITY_UNIT_I_EMAIL, "security@alubee", ("security",)),
     (SECURITY_UNIT_II_EMAIL, "security@alubee", ("security",)),
     (HR_SECURITY_EMAIL, "hr@alubee", ("hr",)),
     (IT_EMAIL, "it@alubee", ("it",)),
-    (IT_ENGINEER_1_EMAIL, "it.1@alubee", ("production", "it")),
-    (IT_ENGINEER_2_EMAIL, "it.2@alubee", ("production", "it")),
-    (IT_ENGINEER_3_EMAIL, "it.3@alubee", ("production", "it")),
     (PPC_EMAIL_1, "ppc.1@alubee", _PPC_UNIT_I_PAGES),
     (PPC_EMAIL_2, "ppc.2@alubee", _PPC_UNIT_II_PAGES),
 )
@@ -115,9 +122,6 @@ _BUILTIN_EMAIL_LANDING_PAGES = {
     SECURITY_UNIT_II_EMAIL: "security",
     HR_SECURITY_EMAIL: "hr",
     IT_EMAIL: "it",
-    IT_ENGINEER_1_EMAIL: "it",
-    IT_ENGINEER_2_EMAIL: "it",
-    IT_ENGINEER_3_EMAIL: "it",
     PPC_EMAIL_1: "logistics",
     PPC_EMAIL_2: "maintenance",
 }
@@ -148,6 +152,27 @@ def _ensure_builtin_viewer_user(email: str, password: str, pages: tuple[str, ...
         auth.set_viewer_pages(user_id, list(pages))
 
 
+def _ensure_builtin_editor_user(email: str, password: str) -> None:
+    """Built-in editor logins — all pages except Admin."""
+    email = email.strip().lower()
+    existing = auth.get_user_by_email(email)
+    if existing is None:
+        user_id = auth.create_user(email, password, "editor")
+        if user_id is None:
+            existing = auth.get_user_by_email(email)
+            user_id = existing["id"] if existing else None
+    else:
+        user_id = existing["id"]
+        auth.set_password(user_id, password)
+        conn = auth.get_db()
+        conn.execute(
+            "UPDATE users SET role = 'editor' WHERE email = ?",
+            (email,),
+        )
+        conn.commit()
+        conn.close()
+
+
 def _ensure_auth_database():
     """Create SQLite auth tables and default users. Runs on import so Gunicorn/Cloud Run work
     (the ``if __name__ == '__main__'`` block is never executed under gunicorn)."""
@@ -166,6 +191,8 @@ def _ensure_auth_database():
             )
             conn.commit()
             conn.close()
+        for email, password in _DEFAULT_BUILTIN_EDITORS:
+            _ensure_builtin_editor_user(email, password)
         for email, password, pages in _DEFAULT_BUILTIN_VIEWERS:
             _ensure_builtin_viewer_user(email, password, pages)
     except Exception as e:
@@ -797,8 +824,6 @@ def _login_landing_url(user: User) -> str:
 
     if role == "viewer":
         email = (user.email or "").strip().lower()
-        if email in _IT_ENGINEER_BUILTIN_EMAILS:
-            return url_for("it", tab="it-tickets")
         builtin_page = _BUILTIN_EMAIL_LANDING_PAGES.get(email)
         if builtin_page:
             return _landing_url_for_page(builtin_page)
