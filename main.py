@@ -1021,6 +1021,7 @@ def _ist_today_date():
 APPROVER_STATUS_COLLECTION = "approver_status"
 # Cap Firestore reads per security tab load (avoids full-collection scan → 429 quota).
 _SECURITY_REQUESTS_QUERY_LIMIT = 400
+_VEHICLE_REQUESTS_QUERY_LIMIT = 1000
 _LEGACY_MD_BYPASS_WRITES_PER_LOAD = 25
 
 
@@ -4721,7 +4722,9 @@ def _fetch_security_vehicle_requests_inner(
     jmd_route_filter: str | None = None,
 ):
     buf = []
-    for snap in _security_requests_snapshots(db, "VEHICLE_REQUEST"):
+    for snap in _security_requests_snapshots(
+        db, "VEHICLE_REQUEST", limit=_VEHICLE_REQUESTS_QUERY_LIMIT
+    ):
         d = snap.to_dict() or {}
         ts = d.get("requested_datetime")
         if ist_day is not None:
@@ -4737,7 +4740,7 @@ def _fetch_security_vehicle_requests_inner(
         buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
 
     buf.sort(key=lambda x: x[0], reverse=True)
-    buf = buf[:200]
+    buf = buf[:_VEHICLE_REQUESTS_QUERY_LIMIT]
 
     rows = []
     for _, d, snap_id in buf:
@@ -5088,7 +5091,7 @@ def _fetch_logistics_vehicle_requests_inner(
     ist_day_from=None,
     ist_day_to=None,
     jmd_route_filter: str | None = None,
-    limit=300,
+    limit=_VEHICLE_REQUESTS_QUERY_LIMIT,
 ):
     buf = []
     use_range = ist_day_from is not None or ist_day_to is not None
@@ -5098,7 +5101,9 @@ def _fetch_logistics_vehicle_requests_inner(
         day_to = ist_day_to or ist_day_from
         if day_from > day_to:
             day_from, day_to = day_to, day_from
-    for snap in _security_requests_snapshots(db, "VEHICLE_REQUEST"):
+    for snap in _security_requests_snapshots(
+        db, "VEHICLE_REQUEST", limit=limit or _VEHICLE_REQUESTS_QUERY_LIMIT
+    ):
         d = snap.to_dict() or {}
         ts = d.get("requested_datetime")
         req_day = _requested_datetime_ist_date(ts)
