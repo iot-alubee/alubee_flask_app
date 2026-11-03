@@ -89,7 +89,7 @@ JMD_1_EMAIL = "jmd.1@alubee.com"
 JMD_2_EMAIL = "jmd.2@alubee.com"
 
 _PPC_UNIT_I_PAGES = ("production", "logistics", "maintenance")
-_PPC_UNIT_II_PAGES = ("production", "maintenance")
+_PPC_UNIT_II_PAGES = ("production", "logistics", "maintenance")
 
 # Built-in accounts (SQLite). Change passwords after deploy in production.
 _DEFAULT_ADMIN = ("admin@alubee.com", "jeevaMuthu14#")
@@ -1021,7 +1021,6 @@ def _ist_today_date():
 APPROVER_STATUS_COLLECTION = "approver_status"
 # Cap Firestore reads per security tab load (avoids full-collection scan → 429 quota).
 _SECURITY_REQUESTS_QUERY_LIMIT = 400
-_VEHICLE_REQUESTS_QUERY_LIMIT = 1000
 _LEGACY_MD_BYPASS_WRITES_PER_LOAD = 25
 
 
@@ -4722,9 +4721,7 @@ def _fetch_security_vehicle_requests_inner(
     jmd_route_filter: str | None = None,
 ):
     buf = []
-    for snap in _security_requests_snapshots(
-        db, "VEHICLE_REQUEST", limit=_VEHICLE_REQUESTS_QUERY_LIMIT
-    ):
+    for snap in _security_requests_snapshots(db, "VEHICLE_REQUEST"):
         d = snap.to_dict() or {}
         ts = d.get("requested_datetime")
         if ist_day is not None:
@@ -4740,7 +4737,7 @@ def _fetch_security_vehicle_requests_inner(
         buf.append((_firestore_ts_to_sort_key(ts), d, snap.id))
 
     buf.sort(key=lambda x: x[0], reverse=True)
-    buf = buf[:_VEHICLE_REQUESTS_QUERY_LIMIT]
+    buf = buf[:200]
 
     rows = []
     for _, d, snap_id in buf:
@@ -5048,6 +5045,26 @@ def _user_can_access_logistics() -> bool:
     return "logistics" in pages
 
 
+def _logistics_user_jmd_route_filter() -> str | None:
+    """Unit lock for Logistics: ppc.1 → Unit I; ppc.2 → Unit II; admin/editor → all."""
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role in ("admin", "editor"):
+        return None
+    email = (getattr(current_user, "email", None) or "").strip().lower()
+    if email == PPC_EMAIL_1:
+        return "JMD1"
+    if email == PPC_EMAIL_2:
+        return "JMD2"
+    return None
+
+
+def _logistics_enforce_request_unit(rd: dict) -> str | None:
+    filt = _logistics_user_jmd_route_filter()
+    if filt and not _vehicle_matches_unit_filter(rd, filt):
+        return "This request belongs to another unit."
+    return None
+
+
 def _logistics_vehicle_row(d, snap_id):
     status_raw = _logistics_vehicle_status_raw(d)
     trip_started = _logistics_vehicle_trip_started(d)
@@ -5091,7 +5108,7 @@ def _fetch_logistics_vehicle_requests_inner(
     ist_day_from=None,
     ist_day_to=None,
     jmd_route_filter: str | None = None,
-    limit=_VEHICLE_REQUESTS_QUERY_LIMIT,
+    limit=300,
 ):
     buf = []
     use_range = ist_day_from is not None or ist_day_to is not None
@@ -5101,9 +5118,7 @@ def _fetch_logistics_vehicle_requests_inner(
         day_to = ist_day_to or ist_day_from
         if day_from > day_to:
             day_from, day_to = day_to, day_from
-    for snap in _security_requests_snapshots(
-        db, "VEHICLE_REQUEST", limit=limit or _VEHICLE_REQUESTS_QUERY_LIMIT
-    ):
+    for snap in _security_requests_snapshots(db, "VEHICLE_REQUEST"):
         d = snap.to_dict() or {}
         ts = d.get("requested_datetime")
         req_day = _requested_datetime_ist_date(ts)
@@ -5321,6 +5336,9 @@ def _logistics_assign_vehicle(
     ref, rd, err = _logistics_load_vehicle_request(db, request_id)
     if err:
         return False, err
+    unit_err = _logistics_enforce_request_unit(rd)
+    if unit_err:
+        return False, unit_err
 
     status = _logistics_vehicle_status_raw(rd)
     if reassign:
@@ -5422,6 +5440,9 @@ def _logistics_cancel_vehicle(request_id: str) -> tuple[bool, str | None]:
     ref, rd, err = _logistics_load_vehicle_request(db, request_id)
     if err:
         return False, err
+    unit_err = _logistics_enforce_request_unit(rd)
+    if unit_err:
+        return False, unit_err
 
     status = _logistics_vehicle_status_raw(rd)
     if _logistics_vehicle_trip_started(rd):
@@ -8933,7 +8954,7 @@ def _render_ppc_page(tab: str):
     if tab == "logistics":
         vehicle_requests, firestore_error = fetch_logistics_vehicle_requests(
             ist_day=selected_day,
-            jmd_route_filter=None,
+            jmd_route_filter=_logistics_user_jmd_route_filter(),
         )
     elif tab == "maintenance":
         selected_unit, unit_filter_locked = _maintenance_unit_for_session(
@@ -9541,7 +9562,11 @@ def logistics_export():
     to_day = _parse_security_table_date(request.args.get("to"), ist_today)
     if from_day > to_day:
         from_day, to_day = to_day, from_day
-    rows, err = fetch_logistics_vehicle_requests_range(from_day, to_day)
+    rows, err = fetch_logistics_vehicle_requests_range(
+        from_day,
+        to_day,
+        jmd_route_filter=_logistics_user_jmd_route_filter(),
+    )
     if err:
         abort(400, err)
     output = io.StringIO()
