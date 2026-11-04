@@ -2162,6 +2162,7 @@ def _it_status_raw(rd: dict) -> str:
     return raw
 
 
+# Slot order: 1 Dinesh S, 2 Manikandan C, 3 Ajay Senthilkumar
 IT_ENGINEER_PHONES: tuple[str, ...] = (
     "9994246682",
     "7339221730",
@@ -4945,7 +4946,6 @@ LOGISTICS_EXTERNAL_VENDORS: tuple[tuple[str, str], ...] = (
 LOGISTICS_INTERNAL_ASSIGNEES: tuple[tuple[str, str], ...] = (
     ("adc239", "Arun Selvam"),
     ("adc324", "Pandiarajan"),
-    ("cl004", "Ajay"),
 )
 
 LOGISTICS_INTERNAL_FLEET: tuple[tuple[str, str], ...] = (
@@ -5492,7 +5492,6 @@ MAINTENANCE_PDC_ASSIGNEES: tuple[tuple[str, str], ...] = (
 MAINTENANCE_CNC_FET_SEC_ASSIGNEES: tuple[tuple[str, str], ...] = (
     ("adc012", "MURUGESAN"),
     ("adc093", "KANDAN"),
-    ("sri079", "MANIKANDAN C"),
 )
 
 
